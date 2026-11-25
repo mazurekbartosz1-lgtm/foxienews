@@ -15,7 +15,9 @@
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
+#include "audio_recorder.h"
 #include "board_pins.h"
+#include "capture_client.h"
 #include "ui_assets.h"
 
 #if __has_include("config.h")
@@ -122,6 +124,9 @@ static FoxieConfig cfg;
 static Preferences prefs;
 static DNSServer dnsServer;
 static WebServer webServer(80);
+static AudioRecorder audioRecorder;
+static bool uploadPending = false;
+static char lastErrorText[24] = "";
 
 static portMUX_TYPE btnMux = portMUX_INITIALIZER_UNLOCKED;
 static ButtonIsrState btnBoot{PIN_BTN_BOOT};
@@ -770,7 +775,12 @@ static void renderCurrentScreen(bool partial = false) {
         case DeviceState::Error:
           drawStatusBar("BLAD", wifiConnected);
           display.drawBitmap(UI_FOX_X, UI_FOX_Y, FOX_SPRITE_ERROR, FOX_SPRITE_ERROR_W, FOX_SPRITE_ERROR_H, GxEPD_BLACK);
-          drawCenteredText(EPD_WIDTH / 2, UI_TITLE_Y, "BLAD", 2);
+          if (lastErrorText[0] != '\0') {
+            drawCenteredText(EPD_WIDTH / 2, 166, "BLAD", 2);
+            drawCenteredText(EPD_WIDTH / 2, 185, lastErrorText, 1);
+          } else {
+            drawCenteredText(EPD_WIDTH / 2, UI_TITLE_Y, "BLAD", 2);
+          }
           break;
 
         case DeviceState::WifiSetup: {
@@ -838,6 +848,11 @@ static void renderUploadProgressPartial() {
   } while (display.nextPage());
 }
 
+static void onUploadProgress(uint8_t percent) {
+  uploadProgress = percent;
+  renderUploadProgressPartial();
+}
+
 static void enterState(DeviceState next, bool partial = false) {
   markUserActivity();
   if (next != DeviceState::WifiSetup) {
@@ -845,21 +860,33 @@ static void enterState(DeviceState next, bool partial = false) {
   }
   isSleeping = false;
   rtcInHibernation = false;
-  currentState = next;
 
+  if (next == DeviceState::Recording) {
+    if (!audioRecorder.startRecording()) {
+      snprintf(lastErrorText, sizeof(lastErrorText), "BLAD AUDIO");
+      currentState = DeviceState::Error;
+      currentLedPattern = LedPattern::WifiPulse;
+      Serial.println("[Foxie] State -> Error (audio start failed)");
+      renderCurrentScreen(partial);
+      return;
+    }
+    recordingStartedMs = millis();
+  }
+
+  currentState = next;
   Serial.printf("[Foxie] State -> %d\n", static_cast<int>(next));
 
   switch (next) {
     case DeviceState::Ready:
+      lastErrorText[0] = '\0';
       currentLedPattern = LedPattern::Off;
       break;
     case DeviceState::Recording:
-      recordingStartedMs = millis();
       currentLedPattern = LedPattern::SlowBlink;
       break;
     case DeviceState::Uploading:
       uploadStartedMs = millis();
-      uploadProgress = 30;
+      uploadProgress = 15;
       currentLedPattern = LedPattern::FastBlink;
       break;
     case DeviceState::Saved:
@@ -924,6 +951,7 @@ static void armHibernationSleepAndStart() {
 static void enterDeepSleepHibernation(const char* reason) {
   Serial.printf("[Foxie] Entering deep sleep hibernation (%s)\n", reason);
   stopCaptivePortal();
+  audioRecorder.prepareForDeepSleep();
   isSleeping = true;
   rtcInHibernation = true;
   currentLedPattern = LedPattern::Off;
@@ -955,9 +983,18 @@ static void onBootShortPress() {
     case DeviceState::Saved:
       enterState(DeviceState::Recording);
       break;
-    case DeviceState::Recording:
-      enterState(DeviceState::Uploading);
+    case DeviceState::Recording: {
+      foxie_audio::CaptureStats stats;
+      audioRecorder.stopRecording(stats);
+      if (stats.pcmBytes < 9600) { // < 300 ms at 16 kHz, 16-bit mono
+        Serial.println("[Foxie] Recording too short (<300 ms), discarded");
+        enterState(DeviceState::Ready);
+      } else {
+        uploadPending = true;
+        enterState(DeviceState::Uploading);
+      }
       break;
+    }
     case DeviceState::Error:
       enterState(DeviceState::Ready);
       break;
@@ -970,12 +1007,23 @@ static void onBootShortPress() {
 static void onBootLongPress() {
   markUserActivity();
   Serial.println("[Foxie] BOOT long press -> Wi-Fi QR");
+  if (currentState == DeviceState::Recording) {
+    foxie_audio::CaptureStats discarded;
+    audioRecorder.stopRecording(discarded);
+  }
   enterState(DeviceState::WifiSetup);
 }
 
 static void onPwrShortPress() {
   markUserActivity();
   Serial.println("[Foxie] PWR short press");
+  if (currentState == DeviceState::Recording) {
+    foxie_audio::CaptureStats discarded;
+    audioRecorder.stopRecording(discarded);
+    Serial.println("[Foxie] Recording cancelled by PWR");
+    enterState(DeviceState::Ready);
+    return;
+  }
   if (currentState == DeviceState::WifiSetup) {
     stopCaptivePortal();
     if (!cfg.wifiSsid.isEmpty()) {
@@ -1048,6 +1096,10 @@ void setup() {
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
   pinMode(PIN_TP_INT, INPUT_PULLUP);
   pinMode(PIN_EPD_PWR, OUTPUT);
+  pinMode(PIN_AUDIO_PWR, OUTPUT);
+  digitalWrite(PIN_AUDIO_PWR, AUDIO_PWR_OFF_LEVEL);
+  pinMode(PIN_AUDIO_PA_CTRL, OUTPUT);
+  digitalWrite(PIN_AUDIO_PA_CTRL, LOW);
 
   esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   applyPolandTimezone();
@@ -1110,6 +1162,9 @@ void setup() {
   display.setRotation(0);
   display.setTextWrap(false);
 
+  bool audioOk = audioRecorder.begin();
+  Serial.printf("[Foxie] Audio init: %s\n", audioOk ? "OK" : "FAILED");
+
   markUserActivity();
   loadConfigFromNvs();
   if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
@@ -1127,6 +1182,42 @@ void loop() {
 
   processButton(btnBoot, onBootShortPress, onBootLongPress);
   processButton(btnPwr, onPwrShortPress, onPwrLongPress);
+
+  if (Serial.available() > 0) {
+    int ch = Serial.read();
+    if (ch == 't' && !isSleeping &&
+        currentState != DeviceState::Recording &&
+        currentState != DeviceState::Uploading) {
+      Serial.println("[Diag] Starting 2s test recording (no upload)...");
+      if (audioRecorder.startRecording()) {
+        delay(2000);
+        foxie_audio::CaptureStats stats;
+        audioRecorder.stopRecording(stats);
+        Serial.printf("[Diag] Test WAV: wav=%lu B, pcm=%lu B, dur=%lu ms, peak=%d, rms=%u\n",
+                      static_cast<unsigned long>(stats.wavBytes),
+                      static_cast<unsigned long>(stats.pcmBytes),
+                      static_cast<unsigned long>(stats.durationMs),
+                      stats.peakAbs,
+                      stats.rms);
+      } else {
+        Serial.println("[Diag] Test recording failed to start");
+      }
+      markUserActivity();
+    } else if (ch == 's') {
+      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) psramFree=%lu apiUrlSet=%d apiKeySet=%d\n",
+                    static_cast<int>(currentState),
+                    static_cast<int>(WiFi.status()),
+                    audioRecorder.isReady() ? 1 : 0,
+                    audioRecorder.chipId(),
+                    audioRecorder.chipRev(),
+                    static_cast<unsigned>(audioRecorder.probeBytes()),
+                    audioRecorder.probePeak(),
+                    audioRecorder.probeRms(),
+                    static_cast<unsigned long>(ESP.getFreePsram()),
+                    (!cfg.apiUrl.isEmpty() && cfg.apiUrl.indexOf("your-project-id") < 0) ? 1 : 0,
+                    !cfg.apiKey.isEmpty() ? 1 : 0);
+    }
+  }
 
   if (portalActive) {
     dnsServer.processNextRequest();
@@ -1146,6 +1237,14 @@ void loop() {
   uint32_t now = millis();
 
   if (!isSleeping && currentState == DeviceState::Recording) {
+    if (audioRecorder.hasReachedLimit()) {
+      foxie_audio::CaptureStats stats;
+      audioRecorder.stopRecording(stats);
+      Serial.println("[Foxie] Max recording duration (60s) reached -> uploading");
+      uploadPending = true;
+      enterState(DeviceState::Uploading);
+      return;
+    }
     if (now - lastRecDrawMs >= 1000) {
       renderRecordingTimerPartial();
       lastRecDrawMs = millis();
@@ -1153,12 +1252,27 @@ void loop() {
       processButton(btnPwr, onPwrShortPress, onPwrLongPress);
     }
   } else if (!isSleeping && currentState == DeviceState::Uploading) {
-    uint32_t elapsed = now - uploadStartedMs;
-    if (elapsed >= 1800) {
-      enterState(DeviceState::Saved);
-    } else if (elapsed >= 900 && uploadProgress < 80) {
-      uploadProgress = 80;
-      renderUploadProgressPartial();
+    if (uploadPending) {
+      uploadPending = false;
+      CaptureUploadResult res = uploadWavCapture(
+        cfg.apiUrl,
+        cfg.apiKey,
+        audioRecorder.wavData(),
+        audioRecorder.wavSize(),
+        onUploadProgress
+      );
+      if (res.ok) {
+        lastErrorText[0] = '\0';
+        enterState(DeviceState::Saved);
+      } else {
+        snprintf(
+          lastErrorText,
+          sizeof(lastErrorText),
+          "%s",
+          res.shortError[0] ? res.shortError : "BLAD WYSYLKI"
+        );
+        enterState(DeviceState::Error);
+      }
     }
   } else if (!isSleeping && currentState == DeviceState::Saved) {
     if (now - savedEnteredMs >= SAVED_AUTO_RETURN_MS) {

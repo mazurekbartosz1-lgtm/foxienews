@@ -1,7 +1,7 @@
 ---
 title: Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)
 slug: projekty/foxie-notes/zadania/etap-1-urzadzenie
-updated_at: 2026-11-25T08:00:00Z
+updated_at: 2026-11-25T19:55:00Z
 tags: [zadania, etap-1, foxie-notes]
 ---
 
@@ -40,5 +40,5 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Podpiąć sterownik ekranu 1.54" e-Paper 200×200 i renderowanie bitmap z `ui_assets.h` #etap-1 #firmware
 - [x] Zaimplementować Captive Portal / `WiFiManager` z ekranem kodu QR na e-inku oraz zapisem SSID, hasła, URL API i `X-API-Key` w NVS #etap-1 #firmware
 - [x] Zaimplementować obsługę przycisków `BOOT` (`GPIO 0`), `PWR` (`GPIO 18`), podtrzymania zasilania `PWR_HOLD` (`GPIO 17`) oraz sygnalizację diodą `GP3` #etap-1 #firmware
-- [ ] Skonfigurować kodek audio **ES8311** (I²C `GP47/48` + I²S) i nagrywanie WAV (16 kHz, 16-bit, mono) do bufora w 8 MB OPI PSRAM #etap-1 #firmware
-- [ ] Zaimplementować wysyłkę nagrania (Base64 JSON) na `POST /api/capture` z nagłówkiem `X-API-Key` oraz obsługę ekranów Zapisano / Błąd #etap-1 #firmware
+- [x] Skonfigurować kodek audio **ES8311** (I²C `GP47/48` + I²S) i nagrywanie WAV (16 kHz, 16-bit, mono) do bufora w 8 MB OPI PSRAM #etap-1 #firmware
+- [x] Zaimplementować wysyłkę nagrania (Base64 JSON) na `POST /api/capture` z nagłówkiem `X-API-Key` oraz obsługę ekranów Zapisano / Błąd #etap-1 #firmware

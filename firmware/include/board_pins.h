@@ -26,13 +26,17 @@ constexpr int PIN_EPD_MOSI = 13;
 constexpr int PIN_I2C_SDA = 47;
 constexpr int PIN_I2C_SCL = 48;
 
-// --- Audio Codec ES8311 (I2S + Amp Power) ---
-constexpr int PIN_I2S_MCLK  = 14;
-constexpr int PIN_I2S_BCLK  = 15;
-constexpr int PIN_I2S_DIN   = 16; // Mic data from ES8311 to ESP32-S3
-constexpr int PIN_I2S_WS    = 38; // LRCK / Word Select
-constexpr int PIN_I2S_DOUT  = 45; // Speaker data from ESP32-S3 to ES8311
-constexpr int PIN_AUDIO_PWR = 42; // Audio amplifier power enable
+// --- Audio Codec ES8311 (I2S + Codec/Amp Power) ---
+constexpr int PIN_I2S_MCLK        = 14;
+constexpr int PIN_I2S_BCLK        = 15;
+constexpr int PIN_I2S_DIN         = 16; // Mic data from ES8311 to ESP32-S3
+constexpr int PIN_I2S_WS          = 38; // LRCK / Word Select
+constexpr int PIN_I2S_DOUT        = 45; // Speaker data from ESP32-S3 to ES8311
+constexpr int PIN_AUDIO_PWR       = 42; // Active-LOW ES8311 power rail (pull LOW before Wire.begin)
+constexpr int AUDIO_PWR_ON_LEVEL  = LOW;
+constexpr int AUDIO_PWR_OFF_LEVEL = HIGH;
+constexpr int PIN_AUDIO_PA_CTRL   = 46; // NS4150B speaker amplifier enable (active-HIGH)
+constexpr uint8_t ES8311_I2C_ADDR = 0x18;
 
 // --- Buttons, Power Latch & Status LED ---
 constexpr int PIN_BTN_BOOT   = 0;  // Active LOW (also USB download strapping pin)

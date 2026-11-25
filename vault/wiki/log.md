@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-25T19:30:00Z
+updated_at: 2026-11-25T19:55:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-25
+- **Etap 1C zakończony — kodek ES8311, nagrywanie WAV w PSRAM i wysyłka `POST /api/capture`:**
+  - Dodano moduł [`audio_recorder.h`](../../../firmware/include/audio_recorder.h) / [`audio_recorder.cpp`](../../../firmware/src/audio_recorder.cpp): zasilanie `AUDIO_PWR=42` (active-LOW przed `Wire.begin()`), inicjalizacja kodeka ES8311 (`0x18`, `ID=0x8311 rev=0x01`) dla analogowego mikrofonu `MIC1P-MIC1N`, I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) oraz nagrywanie przez dedykowany task FreeRTOS do bufora WAV (do 60 s = `1920044 B`) w 8 MB OPI PSRAM. Zweryfikowano na płytce (`COM5`) nagraniem testowym 2 s (`65580 B` WAV, `peak=3127`, `rms=247`).
+  - Dodano strumieniowego klienta [`capture_client.h`](../../../firmware/include/capture_client.h) / [`capture_client.cpp`](../../../firmware/src/capture_client.cpp) (`mbedtls_base64_encode`, `POST /api/capture` z `X-API-Key`) oraz podpięto prawdziwe przejścia `Recording` -> `Uploading` -> `Saved` / `Error` w [`main.cpp`](../../../firmware/src/main.cpp).
 - **Skill `obsidian-commit-sync`, reguła `AGENTS.md` i `status.md`:** Dodano workspace skill `.agents/skills/obsidian-commit-sync/SKILL.md`, regułę repozytorium `AGENTS.md` oraz stronę handoffową `[[projekty/foxie-notes/status|status]]`, aby każdy `git commit` aktualizował kontekst Obsidian i umożliwiał płynne wznowienie pracy z nowego okna kontekstowego.
 - **Dedykowany lisek hibernacji + pogoda dla Trąbek Wielkich:** Rozdzielono stany `FOX_SPRITE_READY` (czujny lisek) i `FOX_SPRITE_HIBERNATE` (lisek śpiący na biurku pod księżycem, zegar 24h widoczny i odświeżany bez Wi-Fi co minutę z RTC, pogoda ukryta). Domyślną lokalizację Open-Meteo ustawiono na Trąbki Wielkie (`54.1697, 18.5397`) z możliwością zmiany miasta w Captive Portalu.
 - **Zegar 24h, pogoda Foxie (co 30 min) i hibernacja deep sleep (2h) + Etap 1B:**
