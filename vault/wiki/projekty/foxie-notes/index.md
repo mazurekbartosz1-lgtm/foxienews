@@ -23,6 +23,7 @@ Prywatny system do szybkiego przechwytywania notatek głosowych i przeglądania 
 - `PWR` (`GPIO 18`, długie przytrzymanie ≥ 2.5 s): bezpieczne uśpienie / wyłączenie zasilania bateryjnego (`PWR_HOLD`).
 
 ## Powiązane dokumenty i zadania
+- [[projekty/foxie-notes/status|Aktualny stan i handoff (status)]]
 - [[projekty/foxie-notes/sprzet-waveshare-v2|Specyfikacja i pinout Waveshare V2]]
 - [[projekty/foxie-notes/zadania/etap-1-urzadzenie|Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)]]
 - [[projekty/foxie-notes/zadania/etap-2-wiki-webapp|Zadania — Etap 2 (Webhook, Firestore, Web App)]]

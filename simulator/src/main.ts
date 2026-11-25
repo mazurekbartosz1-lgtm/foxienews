@@ -9,7 +9,12 @@ import {
   type LedMode,
 } from "./device-sim.ts";
 import { EPD_HEIGHT, EPD_WIDTH, EinkFramebuffer } from "./eink-canvas.ts";
-import { renderDeviceScreen, type DeviceState, type ScreenContext } from "./screens.ts";
+import {
+  renderDeviceScreen,
+  type DeviceState,
+  type ScreenContext,
+  type WeatherKind,
+} from "./screens.ts";
 
 const canvasEl = document.getElementById("eink-canvas") as HTMLCanvasElement;
 const ledEl = document.getElementById("led-gp3") as HTMLSpanElement;
@@ -24,10 +29,13 @@ const zoomButtons = document.querySelectorAll<HTMLButtonElement>("[data-zoom]");
 const stateButtons = document.querySelectorAll<HTMLButtonElement>("[data-state]");
 const exportTabs = document.querySelectorAll<HTMLButtonElement>("[data-export]");
 const forceRefreshBtn = document.getElementById("btn-force-refresh") as HTMLButtonElement;
+const simSleepBtn = document.getElementById("btn-sim-sleep") as HTMLButtonElement;
 const clearLogBtn = document.getElementById("btn-clear-log") as HTMLButtonElement;
 const chkEpaperFlash = document.getElementById("chk-epaper-flash") as HTMLInputElement;
 const chkWifiConnected = document.getElementById("chk-wifi-connected") as HTMLInputElement;
 const chkSimError = document.getElementById("chk-sim-error") as HTMLInputElement;
+const selectWeather = document.getElementById("select-weather") as HTMLSelectElement;
+const inputTemp = document.getElementById("input-temp") as HTMLInputElement;
 const rangeBattery = document.getElementById("range-battery") as HTMLInputElement;
 const batteryValEl = document.getElementById("battery-val") as HTMLElement;
 const inputApSsid = document.getElementById("input-ap-ssid") as HTMLInputElement;
@@ -218,9 +226,25 @@ exportTabs.forEach((tab) => {
 });
 
 forceRefreshBtn.addEventListener("click", () => sim.forceFullRefresh());
+simSleepBtn.addEventListener("click", () => sim.enterDeepSleep("Symulacja 2h bezczynności"));
+canvasEl.addEventListener("click", () => {
+  if (sim.ctx.sleeping) {
+    sim.touchScreen();
+  }
+});
 clearLogBtn.addEventListener("click", () => {
   hwLogEl.textContent = "";
 });
+
+const syncWeatherInputs = () => {
+  const parsed = Number(inputTemp.value);
+  const tempC = Number.isFinite(parsed) ? parsed : null;
+  sim.setWeather(selectWeather.value as WeatherKind, tempC);
+};
+selectWeather.addEventListener("change", syncWeatherInputs);
+inputTemp.addEventListener("input", syncWeatherInputs);
+
+window.setInterval(() => sim.refreshClock(), 15000);
 
 chkWifiConnected.addEventListener("change", () => {
   sim.ctx.wifiConnected = chkWifiConnected.checked;
@@ -280,6 +304,7 @@ window.addEventListener("keydown", (ev) => {
     "4": "saved",
     "5": "error",
     "6": "wifi",
+    "7": "hibernate",
   };
   const next = stateMap[ev.key];
   if (next) {

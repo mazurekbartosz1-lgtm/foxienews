@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase-admin/app";
 import { defineSecret } from "firebase-functions/params";
 import { onRequest } from "firebase-functions/v2/https";
-import { app } from "./app";
+import { app } from "./app.js";
 
 initializeApp();
 

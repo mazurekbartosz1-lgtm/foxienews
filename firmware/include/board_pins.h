@@ -44,6 +44,10 @@ constexpr int LED_OFF_LEVEL  = HIGH;
 constexpr int PIN_BAT_ADC    = 4;  // Battery voltage divider ADC (GP4)
 constexpr int PIN_RTC_INT    = 5;  // PCF85063 RTC interrupt
 
+// --- Capacitive Touch (FT6336 on shared I2C SDA=47, SCL=48) ---
+constexpr int PIN_TP_RST = 7;
+constexpr int PIN_TP_INT = 21; // RTC GPIO 21, active-LOW touch interrupt
+
 // --- MicroSD Slot (1-bit SDMMC) ---
 constexpr int PIN_SD_CLK = 39;
 constexpr int PIN_SD_D0  = 40;

@@ -80,7 +80,7 @@
             </div>
             <div class="state-grid" id="state-buttons">
               <button type="button" data-state="ready" class="state-btn active">
-                1. Gotowy (Śpiący lisek)
+                1. Połączony (Gotowy lisek)
               </button>
               <button type="button" data-state="recording" class="state-btn">
                 2. Nagrywanie (Nasłuch)
@@ -97,11 +97,19 @@
               <button type="button" data-state="wifi" class="state-btn">
                 6. Konfiguracja Wi-Fi (QR)
               </button>
+              <button type="button" data-state="hibernate" class="state-btn">
+                7. Hibernacja (Głęboki sen)
+              </button>
             </div>
           </div>
 
           <div class="panel-card">
-            <h2>Parametry symulacji i Wi-Fi QR</h2>
+            <div class="card-head">
+              <h2>Parametry symulacji, pogoda i hibernacja</h2>
+              <button type="button" id="btn-sim-sleep" class="ghost-btn">
+                Symuluj hibernację (2h)
+              </button>
+            </div>
             <div class="toggles-list">
               <label class="toggle-row">
                 <input type="checkbox" id="chk-epaper-flash" checked />
@@ -118,6 +126,22 @@
             </div>
 
             <div class="field-grid">
+              <label class="field">
+                <span>Pogoda Foxie</span>
+                <select id="select-weather">
+                  <option value="sun">Słońce</option>
+                  <option value="partly" selected>Częśc. chmury</option>
+                  <option value="cloud">Pochmurno</option>
+                  <option value="rain">Deszcz</option>
+                  <option value="snow">Śnieg</option>
+                  <option value="storm">Burza</option>
+                  <option value="fog">Mgła</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Temperatura (°C)</span>
+                <input type="number" id="input-temp" value="12" min="-40" max="50" />
+              </label>
               <label class="field">
                 <span>Bateria (<strong id="battery-val">88%</strong>)</span>
                 <input type="range" id="range-battery" min="5" max="100" value="88" />

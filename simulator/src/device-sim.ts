@@ -1,4 +1,4 @@
-import type { DeviceState, ScreenContext } from "./screens.ts";
+import type { DeviceState, ScreenContext, WeatherKind } from "./screens.ts";
 
 export type LedMode = "off" | "solid" | "fast-blink" | "slow-blink" | "pulse-ok";
 export type ButtonName = "BOOT" | "PWR";
@@ -11,6 +11,11 @@ export interface SimulatorCallbacks {
 }
 
 export const LONG_PRESS_THRESHOLD_MS = 2500;
+
+function formatCurrentTime24h(): string {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
 
 export class FoxieDeviceSim {
   private callbacks: SimulatorCallbacks;
@@ -33,6 +38,9 @@ export class FoxieDeviceSim {
     apSsid: "Foxie-Setup",
     apPassword: "",
     sleeping: false,
+    timeText: formatCurrentTime24h(),
+    weatherTempC: 12,
+    weatherKind: "partly",
   };
 
   constructor(callbacks: SimulatorCallbacks) {
@@ -56,9 +64,48 @@ export class FoxieDeviceSim {
     }
   }
 
+  setWeather(kind: WeatherKind, tempC: number | null): void {
+    this.ctx.weatherKind = kind;
+    this.ctx.weatherTempC = tempC;
+    if (!this.ctx.sleeping && this.ctx.state === "ready") {
+      this.emitRender(false, `Aktualizacja pogody (${kind})`);
+    }
+  }
+
+  refreshClock(): void {
+    const nextTime = formatCurrentTime24h();
+    if (nextTime !== this.ctx.timeText) {
+      this.ctx.timeText = nextTime;
+      if (this.ctx.state === "ready" || this.ctx.state === "hibernate" || this.ctx.sleeping) {
+        this.emitRender(false, "Odświeżenie zegara 24h");
+      }
+    }
+  }
+
+  enterDeepSleep(reason = "Hibernacja (2h bezczynności)"): void {
+    this.clearTimers();
+    this.ctx.sleeping = true;
+    this.ctx.state = "hibernate";
+    this.pwrHoldHigh = true;
+    this.callbacks.onPowerHoldChange(true);
+    this.syncLed();
+    this.emitRender(true, `${reason} -> Deep sleep (Wi-Fi OFF, zegar widoczny)`);
+  }
+
+  touchScreen(): void {
+    if (this.ctx.sleeping || this.ctx.state === "hibernate") {
+      this.ctx.sleeping = false;
+      this.ctx.state = "ready";
+      this.ctx.timeText = formatCurrentTime24h();
+      this.syncLed();
+      this.emitRender(true, "Dotyk ekranu (TP_INT) -> Wybudzono z hibernacji");
+    }
+  }
+
   setStateDirect(next: DeviceState): void {
     this.clearTimers();
-    this.ctx.sleeping = false;
+    this.ctx.sleeping = next === "hibernate";
+    this.ctx.timeText = formatCurrentTime24h();
     this.pwrHoldHigh = true;
     this.callbacks.onPowerHoldChange(true);
     this.ctx.state = next;
@@ -93,6 +140,15 @@ export class FoxieDeviceSim {
   }
 
   private handleBootButton(isLong: boolean): void {
+    if (this.ctx.sleeping) {
+      this.ctx.sleeping = false;
+      this.ctx.state = isLong ? "wifi" : "ready";
+      this.ctx.timeText = formatCurrentTime24h();
+      this.syncLed();
+      this.emitRender(true, "BOOT -> Wybudzono z hibernacji");
+      return;
+    }
+
     if (isLong) {
       this.clearTimers();
       this.ctx.sleeping = false;
@@ -101,11 +157,6 @@ export class FoxieDeviceSim {
       this.ctx.state = "wifi";
       this.syncLed();
       this.emitRender(true, "BOOT (3s) -> Tryb konfiguracji Wi-Fi QR");
-      return;
-    }
-
-    if (this.ctx.sleeping) {
-      this.callbacks.onLog("BOOT zignorowany — urządzenie uśpione (naciśnij PWR)");
       return;
     }
 
@@ -128,32 +179,20 @@ export class FoxieDeviceSim {
 
   private handlePwrButton(isLong: boolean): void {
     if (isLong) {
-      this.clearTimers();
       if (this.ctx.sleeping) {
-        this.ctx.sleeping = false;
-        this.pwrHoldHigh = true;
-        this.ctx.state = "ready";
-        this.callbacks.onPowerHoldChange(true);
-        this.syncLed();
-        this.emitRender(true, "PWR (3s) -> Wybudzono (PWR_HOLD HIGH)");
+        this.touchScreen();
       } else {
-        this.ctx.sleeping = true;
-        this.pwrHoldHigh = false;
-        this.ctx.state = "ready";
-        this.callbacks.onPowerHoldChange(false);
-        this.syncLed();
-        this.emitRender(true, "PWR (3s) -> Deep sleep / PWR_HOLD LOW");
+        this.enterDeepSleep("PWR (3s)");
       }
       return;
     }
 
     if (this.ctx.sleeping) {
       this.ctx.sleeping = false;
-      this.pwrHoldHigh = true;
       this.ctx.state = "ready";
-      this.callbacks.onPowerHoldChange(true);
+      this.ctx.timeText = formatCurrentTime24h();
       this.syncLed();
-      this.emitRender(true, "PWR -> Wybudzono urządzenie");
+      this.emitRender(true, "PWR -> Wybudzono z hibernacji");
       return;
     }
 
@@ -169,7 +208,7 @@ export class FoxieDeviceSim {
       this.clearTimers();
       this.ctx.state = "ready";
       this.syncLed();
-      this.emitRender(true, "PWR -> Powrót do ekranu Gotowy");
+      this.emitRender(true, "PWR -> Powrót do ekranu głównego");
       return;
     }
 
@@ -238,7 +277,7 @@ export class FoxieDeviceSim {
             if (this.ctx.state === "saved") {
               this.ctx.state = "ready";
               this.syncLed();
-              this.emitRender(true, "Auto-powrót do ekranu Gotowy");
+              this.emitRender(true, "Auto-powrót do ekranu głównego");
             }
           }, 3500);
         }
@@ -267,6 +306,9 @@ export class FoxieDeviceSim {
       case "error":
       case "wifi":
         this.callbacks.onLedChange("slow-blink");
+        break;
+      case "hibernate":
+        this.callbacks.onLedChange("off");
         break;
     }
   }

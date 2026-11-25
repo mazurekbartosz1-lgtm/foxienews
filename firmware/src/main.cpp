@@ -1,12 +1,19 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <DNSServer.h>
 #include <GxEPD2_BW.h>
+#include <HTTPClient.h>
 #include <Preferences.h>
 #include <SPI.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <qrcode.h>
+#include <stdlib.h>
+#include <time.h>
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "board_pins.h"
 #include "ui_assets.h"
@@ -68,13 +75,30 @@ struct FoxieConfig {
   String wifiPass;
   String apiUrl;
   String apiKey;
+  String weatherCity;
 };
 
 constexpr uint32_t DEBOUNCE_MS = 35;
 constexpr uint32_t LONG_PRESS_MS = 2500;
 constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
+constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
+constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
 constexpr uint8_t DNS_PORT = 53;
+
+constexpr const char* TZ_POLAND = "CET-1CEST,M3.5.0,M10.5.0/3";
+constexpr const char* DEFAULT_WEATHER_CITY = "Trabki Wielkie";
+constexpr double DEFAULT_WEATHER_LAT = 54.1697; // Trąbki Wielkie, Poland
+constexpr double DEFAULT_WEATHER_LON = 18.5397;
+
+// Preserved across ESP32-S3 deep sleep hibernation
+RTC_DATA_ATTR static bool rtcInHibernation = false;
+RTC_DATA_ATTR static bool rtcWeatherValid = false;
+RTC_DATA_ATTR static int16_t rtcWeatherTempC = 0;
+RTC_DATA_ATTR static int16_t rtcWeatherCode = 0;
+RTC_DATA_ATTR static double rtcLat = DEFAULT_WEATHER_LAT;
+RTC_DATA_ATTR static double rtcLon = DEFAULT_WEATHER_LON;
+RTC_DATA_ATTR static int16_t rtcHibLastMinute = -1;
 
 static DeviceState currentState = DeviceState::Ready;
 static volatile LedPattern currentLedPattern = LedPattern::Off;
@@ -86,8 +110,13 @@ static uint32_t recordingStartedMs = 0;
 static uint32_t lastRecDrawMs = 0;
 static uint32_t uploadStartedMs = 0;
 static uint32_t savedEnteredMs = 0;
+static uint32_t lastActivityMs = 0;
+static uint32_t lastWeatherFetchMs = 0;
+static uint32_t lastClockCheckMs = 0;
+static int lastRenderedMinute = -1;
 static uint8_t uploadProgress = 0;
 static uint8_t batteryPercent = 100;
+static volatile bool touchActivityPending = false;
 
 static FoxieConfig cfg;
 static Preferences prefs;
@@ -97,6 +126,14 @@ static WebServer webServer(80);
 static portMUX_TYPE btnMux = portMUX_INITIALIZER_UNLOCKED;
 static ButtonIsrState btnBoot{PIN_BTN_BOOT};
 static ButtonIsrState btnPwr{PIN_BTN_PWR};
+
+static void markUserActivity() {
+  lastActivityMs = millis();
+}
+
+static void IRAM_ATTR handleTouchIsr() {
+  touchActivityPending = true;
+}
 
 static void IRAM_ATTR handleButtonIsr(void* arg) {
   auto* btn = static_cast<ButtonIsrState*>(arg);
@@ -206,7 +243,6 @@ static void setDisplayPower(bool on) {
 
 static uint8_t readBatteryPercent() {
   uint32_t mv = analogReadMilliVolts(PIN_BAT_ADC);
-  // 2x resistive divider on BAT_ADC (GPIO 4)
   uint32_t batMv = mv * 2;
   if (batMv <= 3300) return 0;
   if (batMv >= 4200) return 100;
@@ -219,6 +255,9 @@ static void loadConfigFromNvs() {
   cfg.wifiPass = prefs.getString("pass", "");
   cfg.apiUrl = prefs.getString("api_url", "");
   cfg.apiKey = prefs.getString("api_key", "");
+  cfg.weatherCity = prefs.getString("w_city", DEFAULT_WEATHER_CITY);
+  rtcLat = prefs.getDouble("w_lat", DEFAULT_WEATHER_LAT);
+  rtcLon = prefs.getDouble("w_lon", DEFAULT_WEATHER_LON);
   prefs.end();
 
   if (cfg.wifiSsid.isEmpty() && strlen(FOXIE_DEFAULT_WIFI_SSID) > 0) {
@@ -232,6 +271,11 @@ static void loadConfigFromNvs() {
       strcmp(FOXIE_DEFAULT_API_KEY, "REPLACE_WITH_DEVICE_API_KEY") != 0) {
     cfg.apiKey = FOXIE_DEFAULT_API_KEY;
   }
+  if (cfg.weatherCity.isEmpty()) {
+    cfg.weatherCity = DEFAULT_WEATHER_CITY;
+    rtcLat = DEFAULT_WEATHER_LAT;
+    rtcLon = DEFAULT_WEATHER_LON;
+  }
 }
 
 static void saveConfigToNvs() {
@@ -240,6 +284,9 @@ static void saveConfigToNvs() {
   prefs.putString("pass", cfg.wifiPass);
   prefs.putString("api_url", cfg.apiUrl);
   prefs.putString("api_key", cfg.apiKey);
+  prefs.putString("w_city", cfg.weatherCity);
+  prefs.putDouble("w_lat", rtcLat);
+  prefs.putDouble("w_lon", rtcLon);
   prefs.end();
 }
 
@@ -257,6 +304,24 @@ static String htmlEscape(const String& input) {
   return out;
 }
 
+static String urlEncode(const String& input) {
+  String encoded;
+  const char hex[] = "0123456789ABCDEF";
+  for (size_t i = 0; i < input.length(); i++) {
+    unsigned char c = static_cast<unsigned char>(input[i]);
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += static_cast<char>(c);
+    } else if (c == ' ') {
+      encoded += F("%20");
+    } else {
+      encoded += '%';
+      encoded += hex[(c >> 4) & 0x0f];
+      encoded += hex[c & 0x0f];
+    }
+  }
+  return encoded;
+}
+
 static void stopCaptivePortal() {
   if (!portalActive) return;
   webServer.stop();
@@ -264,6 +329,138 @@ static void stopCaptivePortal() {
   WiFi.softAPdisconnect(true);
   portalActive = false;
   Serial.println("[Foxie] Captive Portal stopped");
+}
+
+static void applyPolandTimezone() {
+  setenv("TZ", TZ_POLAND, 1);
+  tzset();
+}
+
+static void syncNtpTime(uint32_t waitMs = 2500) {
+  configTzTime(TZ_POLAND, "pool.ntp.org", "time.google.com");
+  struct tm tmNow {};
+  uint32_t start = millis();
+  while ((millis() - start) < waitMs) {
+    if (getLocalTime(&tmNow, 250) && tmNow.tm_year + 1900 >= 2024) {
+      Serial.printf("[Foxie] NTP synced: %02d:%02d\n", tmNow.tm_hour, tmNow.tm_min);
+      return;
+    }
+  }
+  Serial.println("[Foxie] NTP sync pending in background");
+}
+
+static bool getTime24h(char* out, size_t len, int* outMinute = nullptr, int* outSec = nullptr) {
+  struct tm tmNow {};
+  if (getLocalTime(&tmNow, 10) && tmNow.tm_year + 1900 >= 2024) {
+    snprintf(out, len, "%02d:%02d", tmNow.tm_hour, tmNow.tm_min);
+    if (outMinute) *outMinute = tmNow.tm_hour * 60 + tmNow.tm_min;
+    if (outSec) *outSec = tmNow.tm_sec;
+    return true;
+  }
+  snprintf(out, len, "--:--");
+  if (outMinute) *outMinute = -1;
+  if (outSec) *outSec = 0;
+  return false;
+}
+
+static const uint8_t* getWeatherIconForWmo(int code, uint16_t& w, uint16_t& h) {
+  w = ICON_WEATHER_SUN_W;
+  h = ICON_WEATHER_SUN_H;
+  if (code == 0) return ICON_WEATHER_SUN;
+  if (code == 1 || code == 2) return ICON_WEATHER_PARTLY;
+  if (code == 3) return ICON_WEATHER_CLOUD;
+  if (code == 45 || code == 48) return ICON_WEATHER_FOG;
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return ICON_WEATHER_RAIN;
+  if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) return ICON_WEATHER_SNOW;
+  if (code >= 95) return ICON_WEATHER_STORM;
+  return ICON_WEATHER_PARTLY;
+}
+
+static void resolveCustomCityIfNeeded() {
+  if (cfg.weatherCity.equalsIgnoreCase(DEFAULT_WEATHER_CITY) ||
+      cfg.weatherCity.equalsIgnoreCase("Trąbki Wielkie")) {
+    rtcLat = DEFAULT_WEATHER_LAT;
+    rtcLon = DEFAULT_WEATHER_LON;
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  String geoUrl = F("https://geocoding-api.open-meteo.com/v1/search?name=");
+  geoUrl += urlEncode(cfg.weatherCity);
+  geoUrl += F("&count=1&language=pl");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(6000);
+  if (http.begin(client, geoUrl)) {
+    if (http.GET() == HTTP_CODE_OK) {
+      JsonDocument doc;
+      if (deserializeJson(doc, http.getString()) == DeserializationError::Ok &&
+          doc["results"][0]["latitude"].is<double>()) {
+        rtcLat = doc["results"][0]["latitude"].as<double>();
+        rtcLon = doc["results"][0]["longitude"].as<double>();
+        saveConfigToNvs();
+        Serial.printf("[Foxie] City '%s' -> %.4f, %.4f\n",
+                      cfg.weatherCity.c_str(),
+                      rtcLat,
+                      rtcLon);
+      }
+    }
+    http.end();
+  }
+}
+
+static bool fetchWeatherOpenMeteo() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  char url[200];
+  snprintf(
+    url,
+    sizeof(url),
+    "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code",
+    rtcLat,
+    rtcLon
+  );
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(8000);
+  if (!http.begin(client, url)) {
+    Serial.println("[Foxie] Weather http.begin failed");
+    return false;
+  }
+
+  int statusCode = http.GET();
+  bool ok = false;
+  if (statusCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (!err && doc["current"]["temperature_2m"].is<double>()) {
+      rtcWeatherTempC = static_cast<int16_t>(lround(doc["current"]["temperature_2m"].as<double>()));
+      rtcWeatherCode = static_cast<int16_t>(doc["current"]["weather_code"] | 1);
+      rtcWeatherValid = true;
+      lastWeatherFetchMs = millis();
+      ok = true;
+      Serial.printf("[Foxie] Weather (%s): %d C (WMO %d)\n",
+                    cfg.weatherCity.c_str(),
+                    rtcWeatherTempC,
+                    rtcWeatherCode);
+    } else {
+      Serial.printf("[Foxie] Weather JSON parse error: %s\n", err.c_str());
+    }
+  } else {
+    Serial.printf("[Foxie] Weather HTTP error: %d (%s)\n", statusCode, http.errorToString(statusCode).c_str());
+  }
+  http.end();
+  return ok;
 }
 
 static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
@@ -291,6 +488,9 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
     Serial.printf("[Foxie] Wi-Fi connected! IP: %s, RSSI: %d dBm\n",
                   WiFi.localIP().toString().c_str(),
                   WiFi.RSSI());
+    syncNtpTime();
+    resolveCustomCityIfNeeded();
+    fetchWeatherOpenMeteo();
     return true;
   }
 
@@ -300,8 +500,9 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
 }
 
 static void handlePortalRoot() {
+  markUserActivity();
   String html;
-  html.reserve(1800);
+  html.reserve(2100);
   html += F("<!doctype html><html lang='pl'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Foxie Setup</title>"
@@ -314,13 +515,15 @@ static void handlePortalRoot() {
             "button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:6px;"
             "background:#1c1917;color:#fff;font-size:1rem;cursor:pointer}</style></head><body>"
             "<h1>Foxie Notes — Konfiguracja</h1>"
-            "<p>Wpisz dane sieci Wi-Fi (2.4 GHz) oraz opcjonalnie adres backendu i X-API-Key.</p>"
+            "<p>Dane Wi-Fi (2.4 GHz), miasto pogody oraz ustawienia backendu.</p>"
             "<form method='POST' action='/save'>"
             "<label>Nazwa sieci Wi-Fi (SSID)<input name='ssid' required value='");
   html += htmlEscape(cfg.wifiSsid);
   html += F("'></label><label>Haslo Wi-Fi<input name='pass' type='password' placeholder='");
   html += cfg.wifiPass.isEmpty() ? F("haslo sieci") : F("pozostaw puste, aby zachowac");
-  html += F("'></label><label>URL API (np. https://twoj-projekt.web.app)<input name='api_url' value='");
+  html += F("'></label><label>Miasto pogody<input name='w_city' value='");
+  html += htmlEscape(cfg.weatherCity);
+  html += F("'></label><label>URL API<input name='api_url' value='");
   html += htmlEscape(cfg.apiUrl);
   html += F("'></label><label>X-API-Key<input name='api_key' type='password' placeholder='");
   html += cfg.apiKey.isEmpty() ? F("klucz urzadzenia") : F("pozostaw puste, aby zachowac");
@@ -330,27 +533,23 @@ static void handlePortalRoot() {
 }
 
 static void handlePortalSave() {
+  markUserActivity();
   String nextSsid = webServer.arg("ssid");
   String nextPass = webServer.arg("pass");
+  String nextCity = webServer.arg("w_city");
   String nextApiUrl = webServer.arg("api_url");
   String nextApiKey = webServer.arg("api_key");
 
   nextSsid.trim();
+  nextCity.trim();
   nextApiUrl.trim();
   nextApiKey.trim();
 
-  if (!nextSsid.isEmpty()) {
-    cfg.wifiSsid = nextSsid;
-  }
-  if (!nextPass.isEmpty()) {
-    cfg.wifiPass = nextPass;
-  }
-  if (!nextApiUrl.isEmpty()) {
-    cfg.apiUrl = nextApiUrl;
-  }
-  if (!nextApiKey.isEmpty()) {
-    cfg.apiKey = nextApiKey;
-  }
+  if (!nextSsid.isEmpty()) cfg.wifiSsid = nextSsid;
+  if (!nextPass.isEmpty()) cfg.wifiPass = nextPass;
+  if (!nextCity.isEmpty()) cfg.weatherCity = nextCity;
+  if (!nextApiUrl.isEmpty()) cfg.apiUrl = nextApiUrl;
+  if (!nextApiKey.isEmpty()) cfg.apiKey = nextApiKey;
 
   saveConfigToNvs();
   portalSavePending = true;
@@ -440,6 +639,46 @@ static void drawStatusBar(const char* label, bool wifiConnected) {
   display.drawFastHLine(0, UI_STATUS_BAR_H, EPD_WIDTH, GxEPD_BLACK);
 }
 
+static void drawBottomInfoRow(bool showWeather) {
+  char timeBuf[8];
+  getTime24h(timeBuf, sizeof(timeBuf), &lastRenderedMinute);
+
+  display.setTextSize(2);
+  display.setTextColor(GxEPD_BLACK);
+  display.setCursor(12, UI_INFO_BAR_Y);
+  display.print(timeBuf);
+
+  if (!showWeather) {
+    return;
+  }
+
+  char numBuf[8];
+  if (rtcWeatherValid) {
+    snprintf(numBuf, sizeof(numBuf), "%d", rtcWeatherTempC);
+  } else {
+    snprintf(numBuf, sizeof(numBuf), "--");
+  }
+
+  int16_t numChars = static_cast<int16_t>(strlen(numBuf));
+  int16_t tempWidth = numChars * 12 + 8 + 12;
+  int16_t tempX = 188 - tempWidth;
+
+  uint16_t iconW = 20;
+  uint16_t iconH = 20;
+  const uint8_t* weatherIcon = getWeatherIconForWmo(rtcWeatherCode, iconW, iconH);
+  display.drawBitmap(tempX - 24, UI_WEATHER_ICON_Y, weatherIcon, iconW, iconH, GxEPD_BLACK);
+
+  display.setCursor(tempX, UI_INFO_BAR_Y);
+  display.print(numBuf);
+
+  int16_t degX = tempX + numChars * 12 + 2;
+  int16_t degY = UI_INFO_BAR_Y + 3;
+  display.drawCircle(degX, degY, 2, GxEPD_BLACK);
+
+  display.setCursor(degX + 5, UI_INFO_BAR_Y);
+  display.print("C");
+}
+
 static void drawWifiQrCode() {
   QRCode qrcode;
   uint8_t qrcodeData[qrcode_getBufferSize(3)];
@@ -472,7 +711,7 @@ static void drawWifiQrCode() {
 
 static void renderCurrentScreen(bool partial = false) {
   batteryPercent = readBatteryPercent();
-  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  bool wifiConnected = (!isSleeping && WiFi.status() == WL_CONNECTED);
 
   setDisplayPower(true);
   if (partial) {
@@ -486,13 +725,16 @@ static void renderCurrentScreen(bool partial = false) {
     display.fillScreen(GxEPD_WHITE);
 
     if (isSleeping) {
-      drawStatusBar("USPIONY", wifiConnected);
-      display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_SLEEP, FOX_SPRITE_SLEEP_W, FOX_SPRITE_SLEEP_H, GxEPD_BLACK);
+      // Dedicated hibernation pose: 24h clock visible, weather hidden
+      drawStatusBar("USPIONY", false);
+      display.drawBitmap(UI_FOX_X, UI_FOX_SLEEP_Y, FOX_SPRITE_HIBERNATE, FOX_SPRITE_HIBERNATE_W, FOX_SPRITE_HIBERNATE_H, GxEPD_BLACK);
+      drawBottomInfoRow(false);
     } else {
       switch (currentState) {
         case DeviceState::Ready: {
           drawStatusBar(wifiConnected ? "POLACZONY" : "BRAK WI-FI", wifiConnected);
-          display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_SLEEP, FOX_SPRITE_SLEEP_W, FOX_SPRITE_SLEEP_H, GxEPD_BLACK);
+          display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_READY, FOX_SPRITE_READY_W, FOX_SPRITE_READY_H, GxEPD_BLACK);
+          drawBottomInfoRow(true);
           break;
         }
 
@@ -548,7 +790,26 @@ static void renderCurrentScreen(bool partial = false) {
   } while (display.nextPage());
 }
 
-// Refresh only the timer box during recording to minimize blocking time
+static void renderBottomInfoPartial() {
+  setDisplayPower(true);
+  display.setPartialWindow(8, 168, 184, 30);
+  display.firstPage();
+  do {
+    display.fillRect(8, 168, 184, 30, GxEPD_WHITE);
+    drawBottomInfoRow(true);
+  } while (display.nextPage());
+}
+
+static void renderClockOnlyPartial() {
+  setDisplayPower(true);
+  display.setPartialWindow(8, 168, 80, 30);
+  display.firstPage();
+  do {
+    display.fillRect(8, 168, 80, 30, GxEPD_WHITE);
+    drawBottomInfoRow(false);
+  } while (display.nextPage());
+}
+
 static void renderRecordingTimerPartial() {
   uint32_t elapsedSec = (millis() - recordingStartedMs) / 1000;
   char timeBuf[16];
@@ -578,10 +839,12 @@ static void renderUploadProgressPartial() {
 }
 
 static void enterState(DeviceState next, bool partial = false) {
+  markUserActivity();
   if (next != DeviceState::WifiSetup) {
     stopCaptivePortal();
   }
   isSleeping = false;
+  rtcInHibernation = false;
   currentState = next;
 
   Serial.printf("[Foxie] State -> %d\n", static_cast<int>(next));
@@ -614,25 +877,76 @@ static void enterState(DeviceState next, bool partial = false) {
 
   renderCurrentScreen(partial);
   if (next == DeviceState::Recording) {
-    // Anchor timer interval AFTER initial render finishes
     lastRecDrawMs = millis();
   }
 }
 
-static void enterSleepMode() {
+static void configureRtcWakePin(int gpioNum) {
+  auto pin = static_cast<gpio_num_t>(gpioNum);
+  rtc_gpio_init(pin);
+  rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en(pin);
+  rtc_gpio_pulldown_dis(pin);
+}
+
+static void armHibernationSleepAndStart() {
+  // Keep PWR_HOLD latched HIGH during deep sleep so LiPo can wake on button/touch/RTC
+  gpio_hold_en(static_cast<gpio_num_t>(PIN_PWR_HOLD));
+  gpio_deep_sleep_hold_en();
+
+  uint64_t wakeMask = (1ULL << PIN_BTN_BOOT) | (1ULL << PIN_BTN_PWR);
+  configureRtcWakePin(PIN_BTN_BOOT);
+  configureRtcWakePin(PIN_BTN_PWR);
+
+  if (digitalRead(PIN_TP_INT) == HIGH) {
+    configureRtcWakePin(PIN_TP_INT);
+    wakeMask |= (1ULL << PIN_TP_INT);
+  }
+
+  esp_sleep_enable_ext1_wakeup(wakeMask, ESP_EXT1_WAKEUP_ANY_LOW);
+
+  // Align silent RTC clock tick to next minute boundary (keeps 24h clock fresh with Wi-Fi OFF)
+  char tmp[8];
+  int minNow = -1;
+  int secNow = 0;
+  uint64_t sleepSec = 60;
+  if (getTime24h(tmp, sizeof(tmp), &minNow, &secNow) && minNow >= 0) {
+    rtcHibLastMinute = static_cast<int16_t>(minNow);
+    sleepSec = static_cast<uint64_t>(60 - (secNow % 60));
+    if (sleepSec < 5) sleepSec += 60;
+  }
+  esp_sleep_enable_timer_wakeup(sleepSec * 1000000ULL);
+
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+static void enterDeepSleepHibernation(const char* reason) {
+  Serial.printf("[Foxie] Entering deep sleep hibernation (%s)\n", reason);
   stopCaptivePortal();
   isSleeping = true;
+  rtcInHibernation = true;
   currentLedPattern = LedPattern::Off;
   setLedPhysical(false);
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // Draw dedicated hibernation screen (clock visible, weather hidden) and hibernate panel
   renderCurrentScreen(false);
   display.hibernate();
   setDisplayPower(false);
-  Serial.println("[Foxie] Sleeping (dropping PWR_HOLD)");
-  delay(50);
-  digitalWrite(PIN_PWR_HOLD, LOW);
+
+  while (digitalRead(PIN_BTN_BOOT) == LOW || digitalRead(PIN_BTN_PWR) == LOW) {
+    delay(20);
+  }
+  delay(80);
+
+  armHibernationSleepAndStart();
 }
 
 static void onBootShortPress() {
+  markUserActivity();
   Serial.println("[Foxie] BOOT short press");
   if (isSleeping) return;
 
@@ -654,20 +968,14 @@ static void onBootShortPress() {
 }
 
 static void onBootLongPress() {
+  markUserActivity();
   Serial.println("[Foxie] BOOT long press -> Wi-Fi QR");
   enterState(DeviceState::WifiSetup);
 }
 
 static void onPwrShortPress() {
+  markUserActivity();
   Serial.println("[Foxie] PWR short press");
-  if (isSleeping) {
-    digitalWrite(PIN_PWR_HOLD, HIGH);
-    if (WiFi.status() != WL_CONNECTED && !cfg.wifiSsid.isEmpty()) {
-      connectToWifi(8000);
-    }
-    enterState(DeviceState::Ready);
-    return;
-  }
   if (currentState == DeviceState::WifiSetup) {
     stopCaptivePortal();
     if (!cfg.wifiSsid.isEmpty()) {
@@ -678,13 +986,8 @@ static void onPwrShortPress() {
 }
 
 static void onPwrLongPress() {
-  Serial.println("[Foxie] PWR long press");
-  if (isSleeping) {
-    digitalWrite(PIN_PWR_HOLD, HIGH);
-    enterState(DeviceState::Ready);
-  } else {
-    enterSleepMode();
-  }
+  Serial.println("[Foxie] PWR long press -> deep sleep hibernation");
+  enterDeepSleepHibernation("PWR 3s");
 }
 
 static void processButton(
@@ -731,28 +1034,71 @@ static void processButton(
 }
 
 void setup() {
-  // Latch battery power rail immediately so the board stays awake on LiPo
+  // Release deep-sleep hold on PWR_HOLD and keep battery power latched HIGH
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis(static_cast<gpio_num_t>(PIN_PWR_HOLD));
   pinMode(PIN_PWR_HOLD, OUTPUT);
   digitalWrite(PIN_PWR_HOLD, HIGH);
 
-  // Detach JTAG on GP3 before configuring as status LED (active-LOW)
+  rtc_gpio_deinit(static_cast<gpio_num_t>(PIN_BTN_BOOT));
+  rtc_gpio_deinit(static_cast<gpio_num_t>(PIN_BTN_PWR));
+  rtc_gpio_deinit(static_cast<gpio_num_t>(PIN_TP_INT));
+
+  pinMode(PIN_BTN_BOOT, INPUT_PULLUP);
+  pinMode(PIN_BTN_PWR, INPUT_PULLUP);
+  pinMode(PIN_TP_INT, INPUT_PULLUP);
+  pinMode(PIN_EPD_PWR, OUTPUT);
+
+  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
+  applyPolandTimezone();
+
+  // Ultra-fast silent RTC clock tick during hibernation (Wi-Fi stays OFF)
+  if (wakeCause == ESP_SLEEP_WAKEUP_TIMER && rtcInHibernation) {
+    char tmp[8];
+    int curMinute = -1;
+    if (getTime24h(tmp, sizeof(tmp), &curMinute) && curMinute != rtcHibLastMinute) {
+      SPI.begin(PIN_EPD_SCK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
+      setDisplayPower(true);
+      display.init(0, false, 2, false);
+      display.setRotation(0);
+      display.setTextWrap(false);
+      renderClockOnlyPartial();
+      display.hibernate();
+      setDisplayPower(false);
+    }
+    armHibernationSleepAndStart();
+  }
+
+  // Woken by button/touch or cold boot -> return to full awake mode
+  rtcInHibernation = false;
+  isSleeping = false;
+
   gpio_reset_pin(static_cast<gpio_num_t>(PIN_LED_STATUS));
   pinMode(PIN_LED_STATUS, OUTPUT);
   setLedPhysical(false);
   xTaskCreate(ledTask, "led_task", 2048, nullptr, 1, nullptr);
 
-  pinMode(PIN_BTN_BOOT, INPUT_PULLUP);
-  pinMode(PIN_BTN_PWR, INPUT_PULLUP);
   attachInterruptArg(digitalPinToInterrupt(PIN_BTN_BOOT), handleButtonIsr, &btnBoot, CHANGE);
   attachInterruptArg(digitalPinToInterrupt(PIN_BTN_PWR), handleButtonIsr, &btnPwr, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_TP_INT), handleTouchIsr, FALLING);
 
-  pinMode(PIN_EPD_PWR, OUTPUT);
+  if (wakeCause == ESP_SLEEP_WAKEUP_UNDEFINED) {
+    pinMode(PIN_TP_RST, OUTPUT);
+    digitalWrite(PIN_TP_RST, LOW);
+    delay(10);
+    digitalWrite(PIN_TP_RST, HIGH);
+    delay(40);
+  }
+
   setDisplayPower(true);
-
   Serial.begin(115200);
   delay(200);
   Serial.println();
-  Serial.println("[Foxie] Booting Waveshare ESP32-S3-Touch-ePaper-1.54 V2");
+  Serial.printf("[Foxie] Booting Waveshare V2 (wakeCause=%d)\n", static_cast<int>(wakeCause));
+  if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
+    Serial.printf("[Foxie] Woke from hibernation! ext1 mask=0x%llx\n",
+                  static_cast<unsigned long long>(esp_sleep_get_ext1_wakeup_status()));
+  }
   if (psramFound()) {
     Serial.printf("[Foxie] PSRAM OK: %lu bytes free\n", static_cast<unsigned long>(ESP.getFreePsram()));
   } else {
@@ -764,6 +1110,7 @@ void setup() {
   display.setRotation(0);
   display.setTextWrap(false);
 
+  markUserActivity();
   loadConfigFromNvs();
   if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
     enterState(DeviceState::Ready);
@@ -773,6 +1120,11 @@ void setup() {
 }
 
 void loop() {
+  if (touchActivityPending) {
+    touchActivityPending = false;
+    markUserActivity();
+  }
+
   processButton(btnBoot, onBootShortPress, onBootLongPress);
   processButton(btnPwr, onPwrShortPress, onPwrLongPress);
 
@@ -811,6 +1163,36 @@ void loop() {
   } else if (!isSleeping && currentState == DeviceState::Saved) {
     if (now - savedEnteredMs >= SAVED_AUTO_RETURN_MS) {
       enterState(DeviceState::Ready);
+    }
+  } else if (!isSleeping && currentState == DeviceState::Ready) {
+    if ((now - lastActivityMs) >= INACTIVITY_SLEEP_MS) {
+      enterDeepSleepHibernation("2h bezczynnosci");
+      return;
+    }
+
+    bool needBottomRefresh = false;
+
+    if (WiFi.status() == WL_CONNECTED &&
+        (lastWeatherFetchMs == 0 || (now - lastWeatherFetchMs) >= WEATHER_REFRESH_MS)) {
+      if (fetchWeatherOpenMeteo()) {
+        needBottomRefresh = true;
+      } else {
+        lastWeatherFetchMs = now;
+      }
+    }
+
+    if (now - lastClockCheckMs >= 1000) {
+      lastClockCheckMs = now;
+      char tmp[8];
+      int currentMinute = -1;
+      getTime24h(tmp, sizeof(tmp), &currentMinute);
+      if (currentMinute != -1 && currentMinute != lastRenderedMinute) {
+        needBottomRefresh = true;
+      }
+    }
+
+    if (needBottomRefresh) {
+      renderBottomInfoPartial();
     }
   }
 

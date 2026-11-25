@@ -31,9 +31,9 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Zaimplementować eksport gotowych bitmap 1-bit `PROGMEM` i definicji layoutu bezpośrednio do `firmware/include/ui_assets.h` #etap-1 #symulator
 
 ## Etap 1B — Backend `POST /api/capture` (`functions/`)
-- [ ] Zaimplementować walidację żądania `POST /api/capture` (`source`, `text` lub `audioBase64` `audio/wav`) #etap-1 #backend
-- [ ] Zintegrować `@google/genai` (Gemini API) do transkrypcji audio WAV i sformatowania notatki (tytuł, podsumowanie, tagi, opcjonalne `- [ ]`) #etap-1 #backend
-- [ ] Zintegrować `@octokit/rest` do tworzenia pliku `.md` z YAML frontmatterem w `raw/inbox/` w prywatnym repozytorium GitHub #etap-1 #backend
+- [x] Zaimplementować walidację żądania `POST /api/capture` (`source`, `text` lub `audioBase64` `audio/wav`) #etap-1 #backend
+- [x] Zintegrować `@google/genai` (Gemini API) do transkrypcji audio WAV i sformatowania notatki (tytuł, podsumowanie, tagi, opcjonalne `- [ ]`) #etap-1 #backend
+- [x] Zintegrować `@octokit/rest` do tworzenia pliku `.md` z YAML frontmatterem w `raw/inbox/` w prywatnym repozytorium GitHub #etap-1 #backend
 - [ ] Przetestować endpoint lokalnie na emulatorach Firebase (`curl` + symulator) #etap-1 #backend
 
 ## Etap 1C — Firmware Waveshare V2 (`firmware/`)
