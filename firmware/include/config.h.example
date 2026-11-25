@@ -1,0 +1,20 @@
+#pragma once
+
+// Copy this file to firmware/include/config.h and fill in your defaults.
+// Runtime Wi-Fi / API credentials configured via the Captive Portal are saved in NVS
+// and override these fallback defaults.
+
+#define FOXIE_AP_SSID "Foxie-Setup"
+#define FOXIE_AP_PASSWORD "" // Empty = open setup AP (QR code connects automatically)
+
+#define FOXIE_DEFAULT_API_URL "https://your-project-id.web.app"
+#define FOXIE_DEFAULT_API_KEY "REPLACE_WITH_DEVICE_API_KEY"
+
+// Audio capture settings (WAV 16 kHz, 16-bit, mono in PSRAM)
+constexpr uint32_t AUDIO_SAMPLE_RATE_HZ = 16000;
+constexpr uint8_t AUDIO_BITS_PER_SAMPLE = 16;
+constexpr uint8_t AUDIO_CHANNELS = 1;
+constexpr uint32_t AUDIO_MAX_DURATION_SEC = 60;
+
+// Button timing
+constexpr uint32_t BTN_LONG_PRESS_MS = 2500;

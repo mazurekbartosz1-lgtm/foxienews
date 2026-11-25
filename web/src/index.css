@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+:root {
+  --paper-bg: #faf9f5;
+  --paper-surface: #f2f0e8;
+  --paper-border: #e2dfd4;
+  --paper-ink: #1c1917;
+  --paper-muted: #6b675e;
+}
+
+body {
+  background-color: var(--paper-bg);
+  color: var(--paper-ink);
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  -webkit-font-smoothing: antialiased;
+}

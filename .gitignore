@@ -1,0 +1,24 @@
+# Dependencies & build outputs
+node_modules/
+dist/
+functions/lib/
+.pio/
+.vscode/.browse.c_cpp.db*
+
+# Environment & secrets
+.env
+.env.local
+functions/.secret.local
+firmware/include/config.h
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+.firebaserc
+
+# OS
+.DS_Store
+Thumbs.db

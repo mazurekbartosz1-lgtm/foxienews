@@ -1,0 +1,12 @@
+{
+  "name": "foxie-news",
+  "private": true,
+  "scripts": {
+    "dev:sim": "npm --prefix simulator run dev",
+    "dev:web": "npm --prefix web run dev",
+    "build:functions": "npm --prefix functions run build",
+    "watch:functions": "npm --prefix functions run build:watch",
+    "build:web": "npm --prefix web run build",
+    "emulators": "firebase emulators:start"
+  }
+}

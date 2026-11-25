@@ -1,0 +1,28 @@
+import { initializeApp } from "firebase-admin/app";
+import { defineSecret } from "firebase-functions/params";
+import { onRequest } from "firebase-functions/v2/https";
+import { app } from "./app";
+
+initializeApp();
+
+const githubToken = defineSecret("GITHUB_TOKEN");
+const geminiApiKey = defineSecret("GEMINI_API_KEY");
+const deviceApiKey = defineSecret("DEVICE_API_KEY");
+const githubWebhookSecret = defineSecret("GITHUB_WEBHOOK_SECRET");
+const allowedUserEmail = defineSecret("ALLOWED_USER_EMAIL");
+
+export const api = onRequest(
+  {
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 60,
+    secrets: [
+      githubToken,
+      geminiApiKey,
+      deviceApiKey,
+      githubWebhookSecret,
+      allowedUserEmail,
+    ],
+  },
+  app,
+);

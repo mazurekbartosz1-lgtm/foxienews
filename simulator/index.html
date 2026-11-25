@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foxie E-Ink Simulator (200×200 Waveshare 1.54")</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="bench">
+      <header class="bench-header">
+        <div>
+          <h1>Foxie E-Ink Simulator</h1>
+          <p class="subtitle">Waveshare ESP32-S3-Touch-ePaper-1.54 (V2) · 200×200 px · 1-bit</p>
+        </div>
+        <div class="zoom-controls" role="group" aria-label="Powiększenie ekranu">
+          <button type="button" data-zoom="1">1×</button>
+          <button type="button" data-zoom="2" class="active">2×</button>
+          <button type="button" data-zoom="3">3×</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="device-bezel">
+          <div class="device-top-row">
+            <span class="badge">200×200 · 1-BIT</span>
+            <span class="led-wrap">
+              <span id="led-gp3" class="led" aria-label="Dioda GP3"></span>
+              <span class="led-label">LED GP3</span>
+            </span>
+          </div>
+
+          <div class="screen-frame">
+            <canvas id="eink-canvas" width="200" height="200"></canvas>
+          </div>
+
+          <div class="hw-buttons">
+            <button type="button" id="btn-boot" class="hw-btn">BOOT (GPIO0)</button>
+            <button type="button" id="btn-pwr" class="hw-btn">PWR (GPIO18)</button>
+          </div>
+        </div>
+
+        <aside class="controls-panel">
+          <div class="panel-card">
+            <h2>Ekran / Stan urządzenia (szkielet Etap 1)</h2>
+            <select id="state-select" disabled>
+              <option value="ready">Gotowy (Śpiący lisek)</option>
+              <option value="recording">Nagrywanie (Nasłuchujący lisek)</option>
+              <option value="uploading">Wysyłanie</option>
+              <option value="saved">Zapisano</option>
+              <option value="error">Błąd</option>
+              <option value="wifi">Konfiguracja Wi-Fi (QR)</option>
+            </select>
+            <p class="hint">
+              Pełne ekrany z maskotką liska i symulacją odświeżania e-paper zostaną dodane w Etapie 1A.
+            </p>
+          </div>
+
+          <div class="panel-card">
+            <h2>Test sprzętu wirtualnego</h2>
+            <div class="inline-actions">
+              <button type="button" id="btn-toggle-led">Przełącz LED GP3</button>
+            </div>
+            <pre id="hw-log" class="hw-log">Gotowy do testu przycisków BOOT / PWR...</pre>
+          </div>
+
+          <div class="panel-card">
+            <h2>Eksport do C++ (<code>ui_assets.h</code>)</h2>
+            <button type="button" id="btn-export-cpp" disabled>
+              Eksportuj do C++ PROGMEM (Etap 1A)
+            </button>
+            <p class="hint">
+              Kontrakt bufora: 200×200 px, 5000 bajtów, MSB-first row-major (zgodny z GxEPD2 / Waveshare).
+            </p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
