@@ -7,6 +7,9 @@
 #define FOXIE_AP_SSID "Foxie-Setup"
 #define FOXIE_AP_PASSWORD "" // Empty = open setup AP (QR code connects automatically)
 
+#define FOXIE_DEFAULT_WIFI_SSID ""
+#define FOXIE_DEFAULT_WIFI_PASS ""
+
 #define FOXIE_DEFAULT_API_URL "https://your-project-id.web.app"
 #define FOXIE_DEFAULT_API_KEY "REPLACE_WITH_DEVICE_API_KEY"
 

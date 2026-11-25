@@ -8,8 +8,6 @@ import {
   FOX_SPRITE_SAVED,
   FOX_SPRITE_SLEEP,
   FOX_SPRITE_UPLOAD,
-  ICON_ALERT,
-  ICON_CHECK,
   ICON_MIC,
   ICON_WIFI_OFF,
   ICON_WIFI_ON,
@@ -29,24 +27,15 @@ export interface ScreenContext {
   wifiConnected: boolean;
   batteryPercent: number;
   recordingSeconds: number;
-  audioLevel: number; // 0..1
+  audioLevel: number;
   uploadStep: string;
-  uploadProgress: number; // 0..100
+  uploadProgress: number;
   savedTitle: string;
   errorMessage: string;
   apSsid: string;
   apPassword: string;
   sleeping: boolean;
 }
-
-const STATE_LABELS: Record<DeviceState, string> = {
-  ready: "GOTOWY",
-  recording: "NAGRYWANIE",
-  uploading: "WYSYŁANIE",
-  saved: "ZAPISANO",
-  error: "BŁĄD",
-  wifi: "WI-FI AP",
-};
 
 function drawBatteryIcon(
   fb: EinkFramebuffer,
@@ -63,30 +52,35 @@ function drawBatteryIcon(
   }
 }
 
+function getStatusLabel(ctx: ScreenContext): string {
+  if (ctx.sleeping) return "UŚPIONY";
+  switch (ctx.state) {
+    case "ready":
+      return ctx.wifiConnected ? "POŁĄCZONY" : "BRAK WI-FI";
+    case "recording":
+      return "NAGRYWANIE";
+    case "uploading":
+      return "WYSYŁANIE";
+    case "saved":
+      return "ZAPISANO";
+    case "error":
+      return "BŁĄD";
+    case "wifi":
+      return "WI-FI AP";
+  }
+}
+
 function drawStatusBar(fb: EinkFramebuffer, ctx: ScreenContext): void {
   const wifiIcon = ctx.wifiConnected ? ICON_WIFI_ON : ICON_WIFI_OFF;
   fb.drawBitmap(6, 3, wifiIcon);
 
-  const label = ctx.sleeping ? "UŚPIONY" : STATE_LABELS[ctx.state];
-  drawText(fb, 26, 7, label, 1, true);
+  drawText(fb, 26, 7, getStatusLabel(ctx), 1, true);
 
   const batText = `${Math.round(ctx.batteryPercent)}%`;
   drawText(fb, 144, 7, batText, 1, true);
   drawBatteryIcon(fb, 172, 6, ctx.batteryPercent);
 
   fb.drawHLine(0, UI_LAYOUT.STATUS_BAR_H, EPD_WIDTH, true);
-}
-
-function drawFooter(
-  fb: EinkFramebuffer,
-  leftHint: string,
-  rightHint: string,
-): void {
-  fb.drawHLine(0, UI_LAYOUT.FOOTER_Y, EPD_WIDTH, true);
-  drawText(fb, 8, UI_LAYOUT.FOOTER_Y + 9, leftHint, 1, true);
-  if (rightHint) {
-    drawText(fb, 110, UI_LAYOUT.FOOTER_Y + 9, rightHint, 1, true);
-  }
 }
 
 function formatDuration(totalSec: number): string {
@@ -128,7 +122,6 @@ function drawWifiQr(fb: EinkFramebuffer, ctx: ScreenContext): void {
   const originX = Math.round((EPD_WIDTH - totalPx) / 2);
   const originY = UI_LAYOUT.QR_Y;
 
-  // Quiet zone frame
   fb.drawRoundedRect(originX - 4, originY - 4, totalPx + 8, totalPx + 8, true);
 
   for (let r = 0; r < modules; r++) {
@@ -155,34 +148,14 @@ export function renderDeviceScreen(
 
   switch (ctx.state) {
     case "ready": {
-      fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_Y, FOX_SPRITE_SLEEP);
-      if (ctx.sleeping) {
-        drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.TITLE_Y, "FOXIE ŚPI", 2);
-        drawTextCentered(
-          fb,
-          EPD_WIDTH / 2,
-          UI_LAYOUT.SUBTITLE_Y + 4,
-          "Naciśnij PWR aby wybudzić",
-          1,
-        );
-        drawFooter(fb, "PWR:Wybudź", "PWR(3s):Uśpij");
-      } else {
-        drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.TITLE_Y, "GOTOWY", 2);
-        drawTextCentered(
-          fb,
-          EPD_WIDTH / 2,
-          UI_LAYOUT.SUBTITLE_Y + 4,
-          ctx.wifiConnected ? "Połączono z Wi-Fi" : "Brak sieci Wi-Fi",
-          1,
-        );
-        drawFooter(fb, "BOOT:Nagraj", "BOOT(3s):Wi-Fi");
-      }
+      // Minimalist screen: large sleeping desk fox filling most of the canvas
+      fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_READY_Y, FOX_SPRITE_SLEEP);
       break;
     }
 
     case "recording": {
       fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_Y, FOX_SPRITE_LISTEN);
-      fb.drawBitmap(14, 56, ICON_MIC);
+      fb.drawBitmap(10, 28, ICON_MIC);
       drawTextCentered(
         fb,
         EPD_WIDTH / 2,
@@ -190,77 +163,24 @@ export function renderDeviceScreen(
         formatDuration(ctx.recordingSeconds),
         2,
       );
-      drawTextCentered(
-        fb,
-        EPD_WIDTH / 2,
-        UI_LAYOUT.SUBTITLE_Y,
-        "Słucham notatki...",
-        1,
-      );
-
-      // Simple 1-bit audio level bars (WAV 16kHz PSRAM indicator)
-      const bars = 12;
-      const barStartX = 34;
-      for (let i = 0; i < bars; i++) {
-        const threshold = (i + 1) / bars;
-        const barH = 4 + (i % 3) * 3;
-        const active = ctx.audioLevel >= threshold * 0.85;
-        if (active) {
-          fb.fillRect(barStartX + i * 11, UI_LAYOUT.PROGRESS_Y + (10 - barH), 7, barH, true);
-        } else {
-          fb.drawRect(barStartX + i * 11, UI_LAYOUT.PROGRESS_Y + (10 - barH), 7, barH, true);
-        }
-      }
-
-      drawFooter(fb, "BOOT:Wyślij", "PWR:Anuluj");
       break;
     }
 
     case "uploading": {
       fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_Y, FOX_SPRITE_UPLOAD);
-      drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.TITLE_Y, "WYSYŁAM...", 2);
-      drawTextCentered(
-        fb,
-        EPD_WIDTH / 2,
-        UI_LAYOUT.SUBTITLE_Y,
-        ctx.uploadStep || "Gemini + GitHub",
-        1,
-      );
       drawProgressBar(fb, 28, UI_LAYOUT.PROGRESS_Y, 144, 12, ctx.uploadProgress);
-      drawFooter(fb, "Proszę czekać", "");
       break;
     }
 
     case "saved": {
       fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_Y, FOX_SPRITE_SAVED);
-      fb.drawBitmap(14, 56, ICON_CHECK);
       drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.TITLE_Y, "ZAPISANO!", 2);
-      const clippedTitle =
-        ctx.savedTitle.length > 28
-          ? `${ctx.savedTitle.slice(0, 25)}...`
-          : ctx.savedTitle;
-      drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.SUBTITLE_Y, clippedTitle, 1);
-      drawTextCentered(
-        fb,
-        EPD_WIDTH / 2,
-        UI_LAYOUT.PROGRESS_Y,
-        "raw/inbox/ -> GitHub OK",
-        1,
-      );
-      drawFooter(fb, "BOOT:Nowa", "PWR:Gotowy");
       break;
     }
 
     case "error": {
       fb.drawBitmap(UI_LAYOUT.FOX_X, UI_LAYOUT.FOX_Y, FOX_SPRITE_ERROR);
-      fb.drawBitmap(14, 56, ICON_ALERT);
       drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.TITLE_Y, "BŁĄD", 2);
-      const clippedErr =
-        ctx.errorMessage.length > 28
-          ? `${ctx.errorMessage.slice(0, 25)}...`
-          : ctx.errorMessage;
-      drawTextCentered(fb, EPD_WIDTH / 2, UI_LAYOUT.SUBTITLE_Y, clippedErr, 1);
-      drawFooter(fb, "BOOT:Ponów", "PWR:Wróć");
       break;
     }
 
@@ -268,13 +188,11 @@ export function renderDeviceScreen(
       fb.drawBitmap(UI_LAYOUT.PEEK_X, UI_LAYOUT.PEEK_Y, FOX_SPRITE_PEEK);
       drawWifiQr(fb, ctx);
       const ssidLabel = `AP: ${ctx.apSsid.trim() || "Foxie-Setup"}`;
-      drawTextCentered(fb, EPD_WIDTH / 2, 136, ssidLabel, 1);
-      drawTextCentered(fb, EPD_WIDTH / 2, 150, "Zeskanuj QR -> 192.168.4.1", 1);
-      drawFooter(fb, "Captive Portal", "PWR:Wróć");
+      drawTextCentered(fb, EPD_WIDTH / 2, 152, ssidLabel, 1);
+      drawTextCentered(fb, EPD_WIDTH / 2, 168, "192.168.4.1", 1);
       break;
     }
   }
 
-  // Outer crisp 1px border around full 200x200 frame
   fb.drawRect(0, 0, EPD_WIDTH, EPD_HEIGHT, true);
 }
