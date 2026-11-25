@@ -10,6 +10,8 @@
 
 // --- 1.54" e-Paper Display (200x200 px, SPI) ---
 constexpr int PIN_EPD_PWR  = 6;
+constexpr int EPD_PWR_ON_LEVEL  = LOW;  // Active-LOW power switch on Waveshare V2
+constexpr int EPD_PWR_OFF_LEVEL = HIGH;
 constexpr int PIN_EPD_BUSY = 8;
 constexpr int PIN_EPD_RST  = 9;
 constexpr int PIN_EPD_DC   = 10;
@@ -36,7 +38,9 @@ constexpr int PIN_AUDIO_PWR = 42; // Audio amplifier power enable
 constexpr int PIN_BTN_BOOT   = 0;  // Active LOW (also USB download strapping pin)
 constexpr int PIN_BTN_PWR    = 18; // Physical PWR side button
 constexpr int PIN_PWR_HOLD   = 17; // Must be driven HIGH early in setup() on LiPo battery
-constexpr int PIN_LED_STATUS = 3;  // Status LED (GP3)
+constexpr int PIN_LED_STATUS = 3;  // Status LED (GP3, active-LOW on Waveshare V2)
+constexpr int LED_ON_LEVEL   = LOW;
+constexpr int LED_OFF_LEVEL  = HIGH;
 constexpr int PIN_BAT_ADC    = 4;  // Battery voltage divider ADC (GP4)
 constexpr int PIN_RTC_INT    = 5;  // PCF85063 RTC interrupt
 

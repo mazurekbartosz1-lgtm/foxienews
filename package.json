@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev:sim": "npm --prefix simulator run dev",
+    "export:assets": "npm --prefix simulator run export:cpp",
     "dev:web": "npm --prefix web run dev",
     "build:functions": "npm --prefix functions run build",
     "watch:functions": "npm --prefix functions run build:watch",

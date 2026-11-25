@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Foxie E-Ink Simulator (200×200 Waveshare 1.54")</title>
+    <title>Foxie E-Ink Simulator (200×200 Waveshare 1.54" V2)</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -11,7 +11,10 @@
       <header class="bench-header">
         <div>
           <h1>Foxie E-Ink Simulator</h1>
-          <p class="subtitle">Waveshare ESP32-S3-Touch-ePaper-1.54 (V2) · 200×200 px · 1-bit</p>
+          <p class="subtitle">
+            Waveshare ESP32-S3-Touch-ePaper-1.54 (V2) · 200×200 px · 1-bit · Skróty:
+            <kbd>B</kbd> BOOT, <kbd>P</kbd> PWR, <kbd>1</kbd>–<kbd>6</kbd> ekrany
+          </p>
         </div>
         <div class="zoom-controls" role="group" aria-label="Powiększenie ekranu">
           <button type="button" data-zoom="1">1×</button>
@@ -21,57 +24,138 @@
       </header>
 
       <section class="workspace">
-        <div class="device-bezel">
-          <div class="device-top-row">
-            <span class="badge">200×200 · 1-BIT</span>
-            <span class="led-wrap">
-              <span id="led-gp3" class="led" aria-label="Dioda GP3"></span>
-              <span class="led-label">LED GP3</span>
-            </span>
+        <div class="device-column">
+          <div class="device-bezel">
+            <div class="device-top-row">
+              <span class="badge">200×200 · 1-BIT</span>
+              <span id="pwr-hold-pill" class="pill on">PWR_HOLD: HIGH</span>
+              <span class="led-wrap">
+                <span id="led-gp3" class="led off" aria-label="Dioda GP3"></span>
+                <span class="led-label">GP3</span>
+              </span>
+            </div>
+
+            <div class="screen-frame">
+              <canvas id="eink-canvas" width="200" height="200"></canvas>
+            </div>
+
+            <div class="hold-meter-wrap" aria-hidden="true">
+              <div class="hold-meter-label">
+                <span id="hold-label">Przytrzymaj ≥ 2.5 s dla funkcji długiego kliku</span>
+                <span id="hold-ms">0 ms</span>
+              </div>
+              <div class="hold-track">
+                <div id="hold-bar" class="hold-bar"></div>
+              </div>
+            </div>
+
+            <div class="hw-buttons">
+              <button type="button" id="btn-boot" class="hw-btn">
+                <strong>BOOT</strong>
+                <span>GPIO0 · Nagraj / 3s Wi-Fi</span>
+              </button>
+              <button type="button" id="btn-pwr" class="hw-btn">
+                <strong>PWR</strong>
+                <span>GPIO18 · Odśwież / 3s Sen</span>
+              </button>
+            </div>
           </div>
 
-          <div class="screen-frame">
-            <canvas id="eink-canvas" width="200" height="200"></canvas>
-          </div>
-
-          <div class="hw-buttons">
-            <button type="button" id="btn-boot" class="hw-btn">BOOT (GPIO0)</button>
-            <button type="button" id="btn-pwr" class="hw-btn">PWR (GPIO18)</button>
+          <div class="panel-card log-card">
+            <div class="card-head">
+              <h2>Log zdarzeń sprzętowych</h2>
+              <button type="button" id="btn-clear-log" class="ghost-btn">Wyczyść</button>
+            </div>
+            <pre id="hw-log" class="hw-log">Inicjalizacja symulatora Waveshare V2...</pre>
           </div>
         </div>
 
         <aside class="controls-panel">
           <div class="panel-card">
-            <h2>Ekran / Stan urządzenia (szkielet Etap 1)</h2>
-            <select id="state-select" disabled>
-              <option value="ready">Gotowy (Śpiący lisek)</option>
-              <option value="recording">Nagrywanie (Nasłuchujący lisek)</option>
-              <option value="uploading">Wysyłanie</option>
-              <option value="saved">Zapisano</option>
-              <option value="error">Błąd</option>
-              <option value="wifi">Konfiguracja Wi-Fi (QR)</option>
-            </select>
-            <p class="hint">
-              Pełne ekrany z maskotką liska i symulacją odświeżania e-paper zostaną dodane w Etapie 1A.
-            </p>
-          </div>
-
-          <div class="panel-card">
-            <h2>Test sprzętu wirtualnego</h2>
-            <div class="inline-actions">
-              <button type="button" id="btn-toggle-led">Przełącz LED GP3</button>
+            <div class="card-head">
+              <h2>Ekrany i stany liska</h2>
+              <button type="button" id="btn-force-refresh" class="ghost-btn">
+                Wymuś pełne odświeżenie
+              </button>
             </div>
-            <pre id="hw-log" class="hw-log">Gotowy do testu przycisków BOOT / PWR...</pre>
+            <div class="state-grid" id="state-buttons">
+              <button type="button" data-state="ready" class="state-btn active">
+                1. Gotowy (Śpiący lisek)
+              </button>
+              <button type="button" data-state="recording" class="state-btn">
+                2. Nagrywanie (Nasłuch)
+              </button>
+              <button type="button" data-state="uploading" class="state-btn">
+                3. Wysyłanie (Gemini)
+              </button>
+              <button type="button" data-state="saved" class="state-btn">
+                4. Zapisano (Sukces)
+              </button>
+              <button type="button" data-state="error" class="state-btn">
+                5. Błąd (Alert)
+              </button>
+              <button type="button" data-state="wifi" class="state-btn">
+                6. Konfiguracja Wi-Fi (QR)
+              </button>
+            </div>
           </div>
 
           <div class="panel-card">
-            <h2>Eksport do C++ (<code>ui_assets.h</code>)</h2>
-            <button type="button" id="btn-export-cpp" disabled>
-              Eksportuj do C++ PROGMEM (Etap 1A)
-            </button>
-            <p class="hint">
-              Kontrakt bufora: 200×200 px, 5000 bajtów, MSB-first row-major (zgodny z GxEPD2 / Waveshare).
-            </p>
+            <h2>Parametry symulacji i Wi-Fi QR</h2>
+            <div class="toggles-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="chk-epaper-flash" checked />
+                <span>Symuluj odświeżanie e-paper (inwersja pełnego cyklu)</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="chk-wifi-connected" checked />
+                <span>Wi-Fi połączone</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="chk-sim-error" />
+                <span>Symuluj błąd wysyłki API</span>
+              </label>
+            </div>
+
+            <div class="field-grid">
+              <label class="field">
+                <span>Bateria (<strong id="battery-val">88%</strong>)</span>
+                <input type="range" id="range-battery" min="5" max="100" value="88" />
+              </label>
+              <label class="field">
+                <span>AP SSID (kod QR)</span>
+                <input type="text" id="input-ap-ssid" value="Foxie-Setup" maxlength="24" />
+              </label>
+              <label class="field">
+                <span>Hasło AP (opcjonalne)</span>
+                <input
+                  type="text"
+                  id="input-ap-pass"
+                  placeholder="puste = sieć otwarta"
+                  maxlength="24"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="card-head">
+              <h2>Eksport do C++ (<code>PROGMEM</code>)</h2>
+              <div class="export-tabs" role="group" aria-label="Tryb eksportu C++">
+                <button type="button" data-export="assets" class="active">
+                  ui_assets.h
+                </button>
+                <button type="button" data-export="screen">Ekran 5000 B</button>
+              </div>
+            </div>
+            <textarea id="cpp-preview" class="cpp-preview" readonly spellcheck="false"></textarea>
+            <div class="export-actions">
+              <button type="button" id="btn-copy-cpp" class="primary-btn">
+                Kopiuj kod C++
+              </button>
+              <button type="button" id="btn-download-cpp">Pobierz ui_assets.h</button>
+              <span id="copy-status" class="copy-status"></span>
+            </div>
           </div>
         </aside>
       </section>
