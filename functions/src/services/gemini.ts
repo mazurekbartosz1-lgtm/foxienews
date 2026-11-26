@@ -50,7 +50,7 @@ export async function processAudioWithGemini(
     throw new Error("Missing GEMINI_API_KEY configuration");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({

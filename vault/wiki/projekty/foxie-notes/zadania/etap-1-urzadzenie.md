@@ -1,7 +1,7 @@
 ---
 title: Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)
 slug: projekty/foxie-notes/zadania/etap-1-urzadzenie
-updated_at: 2026-11-25T19:55:00Z
+updated_at: 2026-11-26T13:00:00Z
 tags: [zadania, etap-1, foxie-notes]
 ---
 
@@ -19,9 +19,9 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Wypchnąć stan początkowy na repozytorium GitHub (`mazurekbartosz1-lgtm/foxienews`)
 
 ## Konfiguracja środowiska użytkownika
-- [ ] Zainstalować Firebase CLI (`npm install -g firebase-tools`) i zalogować się (`firebase login`) #setup
+- [x] Zainstalować Firebase CLI (`npm install -g firebase-tools`) i zalogować się (`firebase login`) #setup
 - [x] Zainstalować PlatformIO (rozszerzenie VS Code lub `pio` CLI) do kompilacji `firmware/` #setup
-- [ ] Uzupełnić `ALLOWED_USER_EMAIL` w `firestore.rules` oraz sekrety w Firebase Secret Manager (`GITHUB_TOKEN`, `GEMINI_API_KEY`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) #setup
+- [x] Uzupełnić `ALLOWED_USER_EMAIL` w `firestore.rules` oraz sekrety w Firebase Secret Manager (`GITHUB_TOKEN`, `GEMINI_API_KEY`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) #setup
 - [ ] Zweryfikować `firmware/include/board_pins.h` ze schematem PDF rewizji V2 od Waveshare #sprzet
 
 ## Etap 1A — Symulator E-Ink 200×200 (`simulator/`)

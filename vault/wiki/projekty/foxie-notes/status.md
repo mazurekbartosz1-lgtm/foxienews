@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T06:12:00Z
+updated_at: 2026-11-26T13:00:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -26,8 +26,11 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`.
    - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`) i kartę SD (`SD_MMC.end()`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
-3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A)**
-   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 2.5 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do repozytorium GitHub z obsługą `GITHUB_VAULT_PREFIX` oraz `GITHUB_INBOX_DIR`, domyślnie `raw/inbox`).
+3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
+   - Funkcja Cloud Functions v2 `api` (`europe-west1`, Node.js 22) wdrożona na `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` i zweryfikowana na żywo (`GET /api/api/health` -> `200 {"ok":true,"service":"foxie-api"}`).
+   - Wszystkie 5 sekretów (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) zapisane w Firebase Secret Manager oraz lokalnie w gitignorowanym `functions/.secret.local`; `GITHUB_OWNER=mazurekbartosz1-lgtm`, `GITHUB_REPO=foxienews`, `GITHUB_VAULT_PREFIX=vault`, `GEMINI_MODEL=gemini-3.8-flash` w `functions/.env`; `ALLOWED_USER_EMAIL` ustawione w `firestore.rules`.
+   - `firmware/include/config.h` (chronione przez `.gitignore`) zaktualizowane o docelowy URL chmurowy i `DEVICE_API_KEY`.
+   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 3.8 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do repozytorium GitHub z obsługą `GITHUB_VAULT_PREFIX` oraz `GITHUB_INBOX_DIR`, domyślnie `raw/inbox`).
    - Lokalny serwer LAN do testów E2E z urządzenia: `npm --prefix functions run dev` (`devServer.ts` ładujący `.env` + `.secret.local`, nasłuch na `0.0.0.0:8787`).
    - **Etap 2A (Webhook GitHub -> Firestore + API Wiki):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
    - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `9/9` przypadkach (`tsc` + `node --test`).
@@ -36,17 +39,17 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 - **Sprzęt Waveshare V2 (`N8R8`):** Pamiętaj o pinach specyficznych dla V2 — I²C `SDA=47`, `SCL=48`, dotyk `PIN_TP_RST=7`, `PIN_TP_INT=21`, zatrzask zasilania `PWR_HOLD` włączany na starcie. Szyna kodeka `PIN_AUDIO_PWR=42` jest **active-LOW** i musi być włączona przed `Wire.begin()`, a wbudowany mikrofon jest analogowy (`MIC1P-MIC1N`, `0x14=0x1A`), nie DMIC. Szczegóły w [[projekty/foxie-notes/sprzet-waveshare-v2|notatce sprzętowej V2]].
 - **Arduino-ESP32 3.x / ESP-IDF 5.x:** W firmware używamy nowego `driver/i2s_std.h` zamiast przestarzałego `driver/i2s.h`. W `firmware/include/config.h` występują globalne stałe audio z szablonu, dlatego stałe `AudioRecorder` są w `namespace foxie_audio`.
+- **Model Gemini:** Nowe klucze Google AI Studio wymagają `gemini-3.8-flash` (`gemini-2.5-flash` zwraca `404` dla nowych użytkowników) — zweryfikowano na żywo (`OK`).
 - **Sekrety lokalne:** `firmware/include/config.h` zawiera lokalne dane Wi-Fi i jest chroniony przez `.gitignore` — **nigdy** nie dodawaj go do gita ani nie wpisuj haseł do `vault/`.
 - **PowerShell 5.1 na Windows:** Operator `&&` nie działa w lokalnym Windows PowerShell 5.1; w skryptach/komendach używaj `;` z `$ErrorActionPreference = 'Stop'`.
 - **Workflow commitów:** Każda zmiana przed `git commit` musi zaktualizować ten plik, listy w `zadania/` oraz `vault/wiki/log.md` zgodnie ze skillem `.agents/skills/obsidian-commit-sync/SKILL.md`.
 
 ## Następny krok (Next Action)
 
-1. **Test E2E pętli głos -> AI -> GitHub (prywatne lub testowe publiczne repo Obsidian):**
-   - Uzupełnić poza gitem `functions/.env` (`GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_BRANCH`, `GITHUB_VAULT_PREFIX`, `GITHUB_INBOX_DIR`) oraz `functions/.secret.local` (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`).
-   - Uruchomić `npm --prefix functions run dev` (albo wdrożyć na Firebase), wpisać adres `http://<LAN-IP>:8787` (lub URL Firebase) i `X-API-Key` w Captive Portalu (`192.168.4.1`) / `config.h`, a następnie przetestować nagranie z płytki (zarówno online, jak i offline przez kartę MicroSD z automatyczną synchronizacją po powrocie Wi-Fi).
-2. **Etap 2B — Aplikacja webowa (`web/`):**
-   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
+1. **Wgranie firmware z URL chmurowym na płytkę (`COM5`) i test E2E:**
+   - Podłączyć Waveshare V2 przez USB (`COM5`), wgrać zbudowany firmware (`python -m platformio run -d firmware -t upload --upload-port COM5`) i nagrać pierwszą notatkę głosową przyciskiem `BOOT`, weryfikując automatyczny commit `.md` w `vault/raw/inbox/` na GitHubie (oraz tryb offline SD -> auto-sync).
+2. **Etap 2B — Aplikacja webowa (`web/`) + wdrożenie Firestore/Hosting:**
+   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`), a następnie wdrożyć `hosting` i `firestore:rules` oraz podpiąć webhook GitHuba.
 
 ## Pliki startowe do wczytania w nowym oknie
 
