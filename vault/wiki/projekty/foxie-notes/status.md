@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-25T19:55:00Z
+updated_at: 2026-11-26T05:50:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -18,13 +18,13 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Eksporter assetów C++ (`npm --prefix simulator run export:cpp`) generuje `firmware/include/ui_assets.h` (19 sprite'ów / ikon, `20318 bytes PROGMEM`).
 
 2. **Firmware ESP32-S3 (`firmware/`) — Waveshare ESP32-S3-Touch-ePaper-1.54 V2 (`COM5`)**
-   - Płytka jest sflashowana najnowszym firmware (PlatformIO `esp32s3_v2`, `1157531 bytes` Flash).
+   - Płytka jest sflashowana najnowszym firmware (PlatformIO `esp32s3_v2`, `1158379 bytes` Flash).
    - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu).
    - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`), zweryfikowany na porcie szeregowym (`[Foxie] NTP synced: 19:54`).
    - Pogoda z Open-Meteo odświeżana co 30 min przy połączeniu Wi-Fi; domyślna lokalizacja **Trąbki Wielkie** (`54.1697, 18.5397`), zweryfikowana na porcie szeregowym.
    - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do 60 s (`1920044 B`) w PSRAM i dedykowanym taskiem FreeRTOS; zweryfikowane na `COM5` nagraniem testowym 2 s (`wav=65580 B`, `pcm=65536 B`, `dur=2048 ms`, `peak=3127`, `rms=247`).
    - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error` (z krótkim kodem błędu na ekranie, np. `BRAK API URL`).
-   - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara.
+   - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
 3. **Backend Firebase (`functions/`, Etap 1B)**
    - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 2.5 Flash -> commit Markdown do repozytorium GitHub z obsługą opcjonalnego `GITHUB_VAULT_PREFIX`).

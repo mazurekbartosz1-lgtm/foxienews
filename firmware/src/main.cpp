@@ -86,6 +86,7 @@ constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
 constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
+constexpr uint8_t EPD_FULL_REFRESH_EVERY = 30;
 constexpr uint8_t DNS_PORT = 53;
 
 constexpr const char* TZ_POLAND = "CET-1CEST,M3.5.0,M10.5.0/3";
@@ -101,6 +102,8 @@ RTC_DATA_ATTR static int16_t rtcWeatherCode = 0;
 RTC_DATA_ATTR static double rtcLat = DEFAULT_WEATHER_LAT;
 RTC_DATA_ATTR static double rtcLon = DEFAULT_WEATHER_LON;
 RTC_DATA_ATTR static int16_t rtcHibLastMinute = -1;
+RTC_DATA_ATTR static uint8_t rtcHibBatteryPercent = 100;
+RTC_DATA_ATTR static uint8_t rtcHibPartialCount = 0;
 
 static DeviceState currentState = DeviceState::Ready;
 static volatile LedPattern currentLedPattern = LedPattern::Off;
@@ -116,6 +119,7 @@ static uint32_t lastActivityMs = 0;
 static uint32_t lastWeatherFetchMs = 0;
 static uint32_t lastClockCheckMs = 0;
 static int lastRenderedMinute = -1;
+static uint8_t readyPartialCount = 0;
 static uint8_t uploadProgress = 0;
 static uint8_t batteryPercent = 100;
 static volatile bool touchActivityPending = false;
@@ -714,6 +718,37 @@ static void drawWifiQrCode() {
   }
 }
 
+static void formatMinute24h(int minuteOfDay, char* out, size_t len) {
+  if (minuteOfDay >= 0 && minuteOfDay < 1440) {
+    snprintf(out, len, "%02d:%02d", minuteOfDay / 60, minuteOfDay % 60);
+  } else {
+    snprintf(out, len, "--:--");
+  }
+}
+
+static void drawHibernationFrame(int minuteOfDay, uint8_t batPct) {
+  batteryPercent = batPct;
+  display.fillScreen(GxEPD_WHITE);
+  drawStatusBar("USPIONY", false);
+  display.drawBitmap(
+    UI_FOX_X,
+    UI_FOX_SLEEP_Y,
+    FOX_SPRITE_HIBERNATE,
+    FOX_SPRITE_HIBERNATE_W,
+    FOX_SPRITE_HIBERNATE_H,
+    GxEPD_BLACK
+  );
+
+  char timeBuf[8];
+  formatMinute24h(minuteOfDay, timeBuf, sizeof(timeBuf));
+  display.setTextSize(2);
+  display.setTextColor(GxEPD_BLACK);
+  display.setCursor(12, UI_INFO_BAR_Y);
+  display.print(timeBuf);
+
+  display.drawRect(0, 0, EPD_WIDTH, EPD_HEIGHT, GxEPD_BLACK);
+}
+
 static void renderCurrentScreen(bool partial = false) {
   batteryPercent = readBatteryPercent();
   bool wifiConnected = (!isSleeping && WiFi.status() == WL_CONNECTED);
@@ -722,7 +757,15 @@ static void renderCurrentScreen(bool partial = false) {
   if (partial) {
     display.setPartialWindow(0, 0, EPD_WIDTH, EPD_HEIGHT);
   } else {
+    readyPartialCount = 0;
     display.setFullWindow();
+  }
+
+  int hibernationMinute = -1;
+  if (isSleeping) {
+    char tmp[8];
+    getTime24h(tmp, sizeof(tmp), &hibernationMinute);
+    lastRenderedMinute = hibernationMinute;
   }
 
   display.firstPage();
@@ -731,9 +774,8 @@ static void renderCurrentScreen(bool partial = false) {
 
     if (isSleeping) {
       // Dedicated hibernation pose: 24h clock visible, weather hidden
-      drawStatusBar("USPIONY", false);
-      display.drawBitmap(UI_FOX_X, UI_FOX_SLEEP_Y, FOX_SPRITE_HIBERNATE, FOX_SPRITE_HIBERNATE_W, FOX_SPRITE_HIBERNATE_H, GxEPD_BLACK);
-      drawBottomInfoRow(false);
+      drawHibernationFrame(hibernationMinute, batteryPercent);
+      continue;
     } else {
       switch (currentState) {
         case DeviceState::Ready: {
@@ -807,16 +849,6 @@ static void renderBottomInfoPartial() {
   do {
     display.fillRect(8, 168, 184, 30, GxEPD_WHITE);
     drawBottomInfoRow(true);
-  } while (display.nextPage());
-}
-
-static void renderClockOnlyPartial() {
-  setDisplayPower(true);
-  display.setPartialWindow(8, 168, 80, 30);
-  display.firstPage();
-  do {
-    display.fillRect(8, 168, 80, 30, GxEPD_WHITE);
-    drawBottomInfoRow(false);
   } while (display.nextPage());
 }
 
@@ -938,7 +970,9 @@ static void armHibernationSleepAndStart() {
   int secNow = 0;
   uint64_t sleepSec = 60;
   if (getTime24h(tmp, sizeof(tmp), &minNow, &secNow) && minNow >= 0) {
-    rtcHibLastMinute = static_cast<int16_t>(minNow);
+    if (rtcHibLastMinute < 0) {
+      rtcHibLastMinute = static_cast<int16_t>(minNow);
+    }
     sleepSec = static_cast<uint64_t>(60 - (secNow % 60));
     if (sleepSec < 5) sleepSec += 60;
   }
@@ -954,6 +988,7 @@ static void enterDeepSleepHibernation(const char* reason) {
   audioRecorder.prepareForDeepSleep();
   isSleeping = true;
   rtcInHibernation = true;
+  rtcHibPartialCount = 0;
   currentLedPattern = LedPattern::Off;
   setLedPhysical(false);
 
@@ -962,7 +997,10 @@ static void enterDeepSleepHibernation(const char* reason) {
 
   // Draw dedicated hibernation screen (clock visible, weather hidden) and hibernate panel
   renderCurrentScreen(false);
+  rtcHibBatteryPercent = batteryPercent;
+  rtcHibLastMinute = static_cast<int16_t>(lastRenderedMinute);
   display.hibernate();
+  display.end();
   setDisplayPower(false);
 
   while (digitalRead(PIN_BTN_BOOT) == LOW || digitalRead(PIN_BTN_PWR) == LOW) {
@@ -1111,11 +1149,38 @@ void setup() {
     if (getTime24h(tmp, sizeof(tmp), &curMinute) && curMinute != rtcHibLastMinute) {
       SPI.begin(PIN_EPD_SCK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
       setDisplayPower(true);
-      display.init(0, false, 2, false);
-      display.setRotation(0);
-      display.setTextWrap(false);
-      renderClockOnlyPartial();
+
+      if (rtcHibLastMinute < 0 || rtcHibPartialCount >= EPD_FULL_REFRESH_EVERY) {
+        display.init(0, true, 2, false);
+        display.setRotation(0);
+        display.setTextWrap(false);
+        rtcHibBatteryPercent = readBatteryPercent();
+        rtcHibPartialCount = 0;
+        display.setFullWindow();
+        drawHibernationFrame(curMinute, rtcHibBatteryPercent);
+        display.display(false);
+      } else {
+        display.init(0, false, 2, false);
+        display.setRotation(0);
+        display.setTextWrap(false);
+
+        // Restore SSD1681 previous RAM (0x26) after power-off with the exact on-screen frame
+        display.setFullWindow();
+        display.firstPage();
+        do {
+          drawHibernationFrame(rtcHibLastMinute, rtcHibBatteryPercent);
+        } while (display.nextPageToPrevious());
+
+        // Write full new frame to current RAM (0x24) and run clean differential partial refresh
+        display.setFullWindow();
+        drawHibernationFrame(curMinute, rtcHibBatteryPercent);
+        display.display(true);
+        rtcHibPartialCount++;
+      }
+
+      rtcHibLastMinute = static_cast<int16_t>(curMinute);
       display.hibernate();
+      display.end();
       setDisplayPower(false);
     }
     armHibernationSleepAndStart();
@@ -1306,7 +1371,12 @@ void loop() {
     }
 
     if (needBottomRefresh) {
-      renderBottomInfoPartial();
+      if (readyPartialCount >= EPD_FULL_REFRESH_EVERY) {
+        renderCurrentScreen(false);
+      } else {
+        renderBottomInfoPartial();
+        readyPartialCount++;
+      }
     }
   }
 

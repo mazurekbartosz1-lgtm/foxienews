@@ -1,7 +1,7 @@
 ---
 title: Waveshare ESP32-S3-Touch-ePaper-1.54 V2
 slug: projekty/foxie-notes/sprzet-waveshare-v2
-updated_at: 2026-11-25T19:55:00Z
+updated_at: 2026-11-26T05:50:00Z
 tags: [sprzet, waveshare, esp32-s3, pinout]
 ---
 
@@ -17,6 +17,7 @@ Notatka referencyjna sprzętu dla [[projekty/foxie-notes/index|Foxie Notes]] (zg
 
 ## Mapa pinów GPIO
 - **e-Paper (SPI):** `PWR=6` (active-LOW: `LOW` = zasilanie ON, `HIGH` = OFF), `BUSY=8`, `RST=9`, `DC=10`, `CS=11`, `SCK=12`, `MOSI=13`
+  - **Pułapka SSD1681 RAM loss:** Odcięcie zasilania panelu (`PIN_EPD_PWR=HIGH`) kasuje wewnętrzną pamięć RAM kontrolera SSD1681 (`0x24` i `0x26`). Przed częściowym odświeżeniem po utracie zasilania trzeba odtworzyć bufor `0x26` identyczną poprzednią klatką (`display.nextPageToPrevious()`), zapisać pełną nową klatkę do `0x24` i wykonać `display.display(true)`, a okresowo (co 30 min) robić pełne odświeżenie `display.display(false)` oraz wywoływać `display.end()` przed wyłączeniem `PIN_EPD_PWR`.
 - **Wspólna magistrala I²C (ES8311, PCF85063 RTC, SHTC3, FT6336):** `SDA=47`, `SCL=48`
   - **Dotyk pojemnościowy (FT6336):** `TP_RST=7`, `TP_INT=21` (`RTC_GPIO21`, active-LOW — obsługuje wybudzanie z deep sleep)
   - **Uwaga z naklejki V2:** Na tylnym złączu `2×6` etykiety `SDA`/`SCL` są w lewej kolumnie, a `GP20`/`GP19` w prawej — `GP19`/`GP20` to natywne linie **USB D-/D+** i nie wolno używać ich jako I²C.

@@ -1,11 +1,14 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-25T19:55:00Z
+updated_at: 2026-11-26T05:50:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
+
+## 2026-11-26
+- **Naprawa „śnieżenia” e-Paper po wybudzeniu zegara w hibernacji:** Odcięcie zasilania panelu (`PIN_EPD_PWR=HIGH`) kasowało pamięć RAM kontrolera SSD1681 (`0x24` i `0x26`), przez co cichy partial refresh zegara porównywał wyczyszczone okno zegara z losowymi bajtami na reszcie ekranu. W [`main.cpp`](../../../firmware/src/main.cpp) dodano deterministyczny `drawHibernationFrame()`, odtwarzanie poprzedniej klatki w `0x26` przez `display.nextPageToPrevious()` przed `display.display(true)`, okresowe pełne czyszczenie co 30 minut (`EPD_FULL_REFRESH_EVERY`, w hibernacji i w `Ready`) oraz `display.end()` przed odłączeniem zasilania panelu.
 
 ## 2026-11-25
 - **Etap 1C zakończony — kodek ES8311, nagrywanie WAV w PSRAM i wysyłka `POST /api/capture`:**
