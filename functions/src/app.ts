@@ -146,6 +146,7 @@ export function createApp(deps: AppDeps = {}): express.Express {
         source: body.source,
         title: finalTitle,
         vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        inboxDir: process.env.GITHUB_INBOX_DIR,
       });
 
       const markdown = buildCaptureMarkdown({

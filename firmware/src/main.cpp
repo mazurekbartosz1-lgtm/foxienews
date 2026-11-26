@@ -18,6 +18,7 @@
 #include "audio_recorder.h"
 #include "board_pins.h"
 #include "capture_client.h"
+#include "sd_queue.h"
 #include "ui_assets.h"
 
 #if __has_include("config.h")
@@ -86,6 +87,8 @@ constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
 constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
+constexpr uint32_t QUEUE_SYNC_RETRY_MS = 30000;
+constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 60000;
 constexpr uint8_t EPD_FULL_REFRESH_EVERY = 30;
 constexpr uint8_t DNS_PORT = 53;
 
@@ -129,7 +132,12 @@ static Preferences prefs;
 static DNSServer dnsServer;
 static WebServer webServer(80);
 static AudioRecorder audioRecorder;
+static SdQueue sdQueue;
 static bool uploadPending = false;
+static bool savedToSdFlag = false;
+static bool prevWifiConnected = false;
+static uint32_t lastQueueSyncAttemptMs = 0;
+static uint32_t lastWifiReconnectAttemptMs = 0;
 static char lastErrorText[24] = "";
 
 static portMUX_TYPE btnMux = portMUX_INITIALIZER_UNLOCKED;
@@ -779,7 +787,20 @@ static void renderCurrentScreen(bool partial = false) {
     } else {
       switch (currentState) {
         case DeviceState::Ready: {
-          drawStatusBar(wifiConnected ? "POLACZONY" : "BRAK WI-FI", wifiConnected);
+          char statusLabel[24];
+          uint16_t pending = sdQueue.pendingCount();
+          if (pending > 0) {
+            snprintf(
+              statusLabel,
+              sizeof(statusLabel),
+              "%s SD:%u",
+              wifiConnected ? "POLACZONY" : "OFFLINE",
+              static_cast<unsigned>(pending)
+            );
+          } else {
+            snprintf(statusLabel, sizeof(statusLabel), "%s", wifiConnected ? "POLACZONY" : "BRAK WI-FI");
+          }
+          drawStatusBar(statusLabel, wifiConnected);
           display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_READY, FOX_SPRITE_READY_W, FOX_SPRITE_READY_H, GxEPD_BLACK);
           drawBottomInfoRow(true);
           break;
@@ -809,9 +830,9 @@ static void renderCurrentScreen(bool partial = false) {
         }
 
         case DeviceState::Saved:
-          drawStatusBar("ZAPISANO", wifiConnected);
+          drawStatusBar(savedToSdFlag ? "ZAPISANO SD" : "ZAPISANO", wifiConnected);
           display.drawBitmap(UI_FOX_X, UI_FOX_Y, FOX_SPRITE_SAVED, FOX_SPRITE_SAVED_W, FOX_SPRITE_SAVED_H, GxEPD_BLACK);
-          drawCenteredText(EPD_WIDTH / 2, UI_TITLE_Y, "ZAPISANO!", 2);
+          drawCenteredText(EPD_WIDTH / 2, UI_TITLE_Y, savedToSdFlag ? "NA KARCIE SD" : "ZAPISANO!", 2);
           break;
 
         case DeviceState::Error:
@@ -883,6 +904,16 @@ static void renderUploadProgressPartial() {
 static void onUploadProgress(uint8_t percent) {
   uploadProgress = percent;
   renderUploadProgressPartial();
+}
+
+static bool isApiConfigured() {
+  String url = cfg.apiUrl;
+  url.trim();
+  return !url.isEmpty() && url.indexOf("your-project-id") < 0;
+}
+
+static bool isTransientUploadError(int httpStatus) {
+  return httpStatus == 0 || httpStatus >= 500 || httpStatus == 408 || httpStatus == 429;
 }
 
 static void enterState(DeviceState next, bool partial = false) {
@@ -986,6 +1017,7 @@ static void enterDeepSleepHibernation(const char* reason) {
   Serial.printf("[Foxie] Entering deep sleep hibernation (%s)\n", reason);
   stopCaptivePortal();
   audioRecorder.prepareForDeepSleep();
+  sdQueue.prepareForDeepSleep();
   isSleeping = true;
   rtcInHibernation = true;
   rtcHibPartialCount = 0;
@@ -1011,6 +1043,103 @@ static void enterDeepSleepHibernation(const char* reason) {
   armHibernationSleepAndStart();
 }
 
+static void finishRecordingAndDispatch() {
+  foxie_audio::CaptureStats stats;
+  audioRecorder.stopRecording(stats);
+  if (stats.pcmBytes < 9600) { // < 300 ms at 16 kHz, 16-bit mono
+    Serial.println("[Foxie] Recording too short (<300 ms), discarded");
+    enterState(DeviceState::Ready);
+    return;
+  }
+
+  if (WiFi.status() == WL_CONNECTED && isApiConfigured()) {
+    savedToSdFlag = false;
+    uploadPending = true;
+    enterState(DeviceState::Uploading);
+    return;
+  }
+
+  if (sdQueue.isMounted()) {
+    String savedPath;
+    if (sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), savedPath)) {
+      savedToSdFlag = true;
+      enterState(DeviceState::Saved);
+    } else {
+      snprintf(lastErrorText, sizeof(lastErrorText), "BLAD SD");
+      enterState(DeviceState::Error);
+    }
+  } else {
+    snprintf(
+      lastErrorText,
+      sizeof(lastErrorText),
+      "%s",
+      (WiFi.status() != WL_CONNECTED) ? "BRAK WI-FI" : "BRAK API URL"
+    );
+    enterState(DeviceState::Error);
+  }
+}
+
+static void syncOfflineQueueNow() {
+  if (!sdQueue.isMounted() || sdQueue.pendingCount() == 0) return;
+  if (WiFi.status() != WL_CONNECTED || !isApiConfigured()) return;
+
+  markUserActivity();
+  lastQueueSyncAttemptMs = millis();
+  savedToSdFlag = false;
+  uploadPending = false;
+  enterState(DeviceState::Uploading);
+
+  uint16_t syncedCount = 0;
+  String filePath;
+  while (sdQueue.peekOldest(filePath)) {
+    uint8_t* wavBuf = nullptr;
+    size_t wavSize = 0;
+    if (!sdQueue.readFileToPsram(filePath, wavBuf, wavSize)) {
+      Serial.printf("[SD] Skipping unreadable queued file: %s\n", filePath.c_str());
+      enterState(DeviceState::Ready);
+      return;
+    }
+
+    uploadProgress = 15;
+    renderUploadProgressPartial();
+
+    CaptureUploadResult res = uploadWavCapture(
+      cfg.apiUrl,
+      cfg.apiKey,
+      wavBuf,
+      wavSize,
+      onUploadProgress
+    );
+    free(wavBuf);
+
+    if (res.ok) {
+      sdQueue.removeFile(filePath);
+      syncedCount++;
+      markUserActivity();
+    } else {
+      Serial.printf("[SD] Queue sync paused on %s (%s)\n",
+                    filePath.c_str(),
+                    res.shortError[0] ? res.shortError : "ERR");
+      lastQueueSyncAttemptMs = millis();
+      if (!isTransientUploadError(res.httpStatus) && res.httpStatus > 0) {
+        snprintf(lastErrorText, sizeof(lastErrorText), "%s", res.shortError);
+        enterState(DeviceState::Error);
+      } else {
+        enterState(DeviceState::Ready);
+      }
+      return;
+    }
+  }
+
+  if (syncedCount > 0) {
+    Serial.printf("[SD] Offline queue synced (%u file(s))\n", static_cast<unsigned>(syncedCount));
+    savedToSdFlag = false;
+    enterState(DeviceState::Saved);
+  } else {
+    enterState(DeviceState::Ready);
+  }
+}
+
 static void onBootShortPress() {
   markUserActivity();
   Serial.println("[Foxie] BOOT short press");
@@ -1021,18 +1150,9 @@ static void onBootShortPress() {
     case DeviceState::Saved:
       enterState(DeviceState::Recording);
       break;
-    case DeviceState::Recording: {
-      foxie_audio::CaptureStats stats;
-      audioRecorder.stopRecording(stats);
-      if (stats.pcmBytes < 9600) { // < 300 ms at 16 kHz, 16-bit mono
-        Serial.println("[Foxie] Recording too short (<300 ms), discarded");
-        enterState(DeviceState::Ready);
-      } else {
-        uploadPending = true;
-        enterState(DeviceState::Uploading);
-      }
+    case DeviceState::Recording:
+      finishRecordingAndDispatch();
       break;
-    }
     case DeviceState::Error:
       enterState(DeviceState::Ready);
       break;
@@ -1230,12 +1350,26 @@ void setup() {
   bool audioOk = audioRecorder.begin();
   Serial.printf("[Foxie] Audio init: %s\n", audioOk ? "OK" : "FAILED");
 
+  bool sdOk = sdQueue.begin();
+  Serial.printf("[Foxie] SD queue init: %s (pending=%u)\n",
+                sdOk ? "OK" : "NONE",
+                static_cast<unsigned>(sdQueue.pendingCount()));
+
   markUserActivity();
   loadConfigFromNvs();
   if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
+    prevWifiConnected = true;
     enterState(DeviceState::Ready);
-  } else {
+  } else if (cfg.wifiSsid.isEmpty()) {
+    prevWifiConnected = false;
     enterState(DeviceState::WifiSetup);
+  } else {
+    prevWifiConnected = false;
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    lastWifiReconnectAttemptMs = millis();
+    Serial.println("[Foxie] Offline mode -> Ready (SD queue available, hold BOOT 2.5s for setup)");
+    enterState(DeviceState::Ready);
   }
 }
 
@@ -1269,7 +1403,7 @@ void loop() {
       }
       markUserActivity();
     } else if (ch == 's') {
-      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) psramFree=%lu apiUrlSet=%d apiKeySet=%d\n",
+      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) sdMounted=%d sdPending=%u psramFree=%lu apiUrlSet=%d apiKeySet=%d\n",
                     static_cast<int>(currentState),
                     static_cast<int>(WiFi.status()),
                     audioRecorder.isReady() ? 1 : 0,
@@ -1278,9 +1412,34 @@ void loop() {
                     static_cast<unsigned>(audioRecorder.probeBytes()),
                     audioRecorder.probePeak(),
                     audioRecorder.probeRms(),
+                    sdQueue.isMounted() ? 1 : 0,
+                    static_cast<unsigned>(sdQueue.pendingCount()),
                     static_cast<unsigned long>(ESP.getFreePsram()),
-                    (!cfg.apiUrl.isEmpty() && cfg.apiUrl.indexOf("your-project-id") < 0) ? 1 : 0,
+                    isApiConfigured() ? 1 : 0,
                     !cfg.apiKey.isEmpty() ? 1 : 0);
+    } else if (ch == 'q' && !isSleeping &&
+               currentState != DeviceState::Recording &&
+               currentState != DeviceState::Uploading) {
+      if (!sdQueue.isMounted()) {
+        Serial.println("[Diag] SD queue: not mounted");
+      } else {
+        if (audioRecorder.wavSize() <= 44 && audioRecorder.startRecording()) {
+          delay(1500);
+          foxie_audio::CaptureStats stats;
+          audioRecorder.stopRecording(stats);
+        }
+        String queuedPath;
+        if (audioRecorder.wavSize() > 44 &&
+            sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), queuedPath)) {
+          Serial.printf("[Diag] SD queue saved %s, pending=%u\n",
+                        queuedPath.c_str(),
+                        static_cast<unsigned>(sdQueue.pendingCount()));
+        } else {
+          Serial.printf("[Diag] SD queue save failed, pending=%u\n",
+                        static_cast<unsigned>(sdQueue.pendingCount()));
+        }
+      }
+      markUserActivity();
     }
   }
 
@@ -1291,8 +1450,11 @@ void loop() {
       portalSavePending = false;
       delay(300);
       if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
+        prevWifiConnected = true;
+        lastQueueSyncAttemptMs = 0;
         enterState(DeviceState::Ready);
       } else {
+        prevWifiConnected = false;
         enterState(DeviceState::WifiSetup);
       }
       return;
@@ -1303,11 +1465,8 @@ void loop() {
 
   if (!isSleeping && currentState == DeviceState::Recording) {
     if (audioRecorder.hasReachedLimit()) {
-      foxie_audio::CaptureStats stats;
-      audioRecorder.stopRecording(stats);
-      Serial.println("[Foxie] Max recording duration (60s) reached -> uploading");
-      uploadPending = true;
-      enterState(DeviceState::Uploading);
+      Serial.println("[Foxie] Max recording duration (60s) reached -> dispatching");
+      finishRecordingAndDispatch();
       return;
     }
     if (now - lastRecDrawMs >= 1000) {
@@ -1328,7 +1487,18 @@ void loop() {
       );
       if (res.ok) {
         lastErrorText[0] = '\0';
+        savedToSdFlag = false;
         enterState(DeviceState::Saved);
+      } else if (isTransientUploadError(res.httpStatus) && sdQueue.isMounted()) {
+        String savedPath;
+        if (sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), savedPath)) {
+          lastQueueSyncAttemptMs = millis();
+          savedToSdFlag = true;
+          enterState(DeviceState::Saved);
+        } else {
+          snprintf(lastErrorText, sizeof(lastErrorText), "BLAD SD");
+          enterState(DeviceState::Error);
+        }
       } else {
         snprintf(
           lastErrorText,
@@ -1341,11 +1511,39 @@ void loop() {
     }
   } else if (!isSleeping && currentState == DeviceState::Saved) {
     if (now - savedEnteredMs >= SAVED_AUTO_RETURN_MS) {
+      savedToSdFlag = false;
       enterState(DeviceState::Ready);
     }
   } else if (!isSleeping && currentState == DeviceState::Ready) {
     if ((now - lastActivityMs) >= INACTIVITY_SLEEP_MS) {
       enterDeepSleepHibernation("2h bezczynnosci");
+      return;
+    }
+
+    bool wifiNow = (WiFi.status() == WL_CONNECTED);
+    if (wifiNow && !prevWifiConnected) {
+      prevWifiConnected = true;
+      Serial.printf("[Foxie] Wi-Fi reconnected! IP: %s\n", WiFi.localIP().toString().c_str());
+      syncNtpTime(1500);
+      resolveCustomCityIfNeeded();
+      fetchWeatherOpenMeteo();
+      lastQueueSyncAttemptMs = 0;
+      renderCurrentScreen(false);
+    } else if (!wifiNow && prevWifiConnected) {
+      prevWifiConnected = false;
+      Serial.println("[Foxie] Wi-Fi disconnected (offline mode)");
+      renderCurrentScreen(false);
+    } else if (!wifiNow && !cfg.wifiSsid.isEmpty() &&
+               (now - lastWifiReconnectAttemptMs) >= WIFI_RECONNECT_INTERVAL_MS) {
+      lastWifiReconnectAttemptMs = now;
+      Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+    }
+
+    if (wifiNow && sdQueue.isMounted() && sdQueue.pendingCount() > 0 && isApiConfigured() &&
+        (lastQueueSyncAttemptMs == 0 || (now - lastQueueSyncAttemptMs) >= QUEUE_SYNC_RETRY_MS)) {
+      syncOfflineQueueNow();
       return;
     }
 

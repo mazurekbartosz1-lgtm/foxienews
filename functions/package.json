@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "dev": "npm run build && node lib/devServer.js",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test lib/__tests__/*.test.js"
   },

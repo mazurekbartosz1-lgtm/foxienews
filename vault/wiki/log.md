@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T05:57:00Z
+updated_at: 2026-11-26T06:12:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Kolejka offline MicroSD + auto-sync (`firmware/`) i lokalny serwer LAN AI (`functions/`):**
+  - Dodano [`sd_queue.h`](../../../firmware/include/sd_queue.h) / [`sd_queue.cpp`](../../../firmware/src/sd_queue.cpp) (1-bit SDMMC `/foxie_queue`, atomowy zapis `.tmp` -> `.wav`, odczyt FIFO do PSRAM, bezpieczne `SD_MMC.end()` przed `deep_sleep`). Zweryfikowano na `COM5` (`sdMounted=1`, nagranie 2 s `65580 B`, `peak=4180`, `rms=401`).
+  - W [`main.cpp`](../../../firmware/src/main.cpp) dodano zapis na kartę SD w trybie offline lub przy błędach sieci, automatyczną synchronizację kolejki po powrocie Wi-Fi, wskaźnik `SD:N` w pasku stanu oraz przejście offline w `Ready` (zamiast wymuszania ekranu QR przy zapisanym SSID).
+  - W `functions/` dodano [`devServer.ts`](../../../functions/src/devServer.ts) (`npm --prefix functions run dev` ładujący `.env` + `.secret.local` na `0.0.0.0:8787`), obsługę `GITHUB_INBOX_DIR` w [`markdown.ts`](../../../functions/src/services/markdown.ts) / [`app.ts`](../../../functions/src/app.ts) oraz ulepszono prompt Obsidiana w [`gemini.ts`](../../../functions/src/services/gemini.ts) (`@due(YYYY-MM-DD)`). Testy `npm --prefix functions test`: `9/9`.
 - **Etap 2A zakończony — Webhook GitHub, parser zadań/Markdown i API Wiki (`functions/`):**
   - Zaimplementowano [`wikiParser.ts`](../../../functions/src/services/wikiParser.ts) (frontmatter, `markdownToPlainText`, `extractTasksFromMarkdown` dla `- [ ]`/`- [x]` z `@due(...)`, `#tag` i priorytetem), odczyt plików z GitHuba w [`github.ts`](../../../functions/src/services/github.ts), warstwę Firestore [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) (`wiki_pages`, `wiki_meta/index`, `tasks` + `InMemoryVaultStore`) oraz orkiestrator [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts) z weryfikacją `X-Hub-Signature-256`.
   - Podpięto `POST /api/webhook/github`, `GET /api/wiki/index` (`?q=`) i `GET /api/wiki/page/*` (`?format=plain`) w [`app.ts`](../../../functions/src/app.ts); testy w [`wikiSync.test.ts`](../../../functions/src/__tests__/wikiSync.test.ts) + [`capture.test.ts`](../../../functions/src/__tests__/capture.test.ts) przechodzą w `9/9` przypadkach (`npm --prefix functions test`).

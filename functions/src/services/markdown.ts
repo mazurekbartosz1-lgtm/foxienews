@@ -51,10 +51,16 @@ export function buildInboxPath(params: {
   source: CaptureSource;
   title: string;
   vaultPrefix?: string;
+  inboxDir?: string;
 }): string {
   const stamp = formatTimestampForFilename(params.createdAt);
   const slug = slugifyPolish(params.title);
-  const relative = `raw/inbox/${stamp}-${params.source}-${slug}.md`;
+  const cleanInboxDir =
+    (params.inboxDir ?? "raw/inbox")
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\/+|\/+$/g, "") || "raw/inbox";
+  const relative = `${cleanInboxDir}/${stamp}-${params.source}-${slug}.md`;
   const prefix = (params.vaultPrefix ?? "").trim().replace(/^\/+|\/+$/g, "");
   return prefix ? `${prefix}/${relative}` : relative;
 }

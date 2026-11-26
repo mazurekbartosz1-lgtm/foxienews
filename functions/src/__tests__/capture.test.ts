@@ -38,6 +38,16 @@ test("buildInboxPath builds schema-compliant inbox path with optional prefix", (
     }),
     "vault/raw/inbox/2026-11-25T19-10-05Z-web-lista-zadan.md",
   );
+
+  assert.equal(
+    buildInboxPath({
+      createdAt: fixedDate,
+      source: "waveshare-154",
+      title: "Notatka z pola",
+      inboxDir: "/Inbox/",
+    }),
+    "Inbox/2026-11-25T19-10-05Z-waveshare-154-notatka-z-pola.md",
+  );
 });
 
 test("buildCaptureMarkdown formats frontmatter and tasks", () => {

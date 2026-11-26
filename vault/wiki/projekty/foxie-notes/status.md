@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T05:57:00Z
+updated_at: 2026-11-26T06:12:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -18,16 +18,17 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Eksporter assetów C++ (`npm --prefix simulator run export:cpp`) generuje `firmware/include/ui_assets.h` (19 sprite'ów / ikon, `20318 bytes PROGMEM`).
 
 2. **Firmware ESP32-S3 (`firmware/`) — Waveshare ESP32-S3-Touch-ePaper-1.54 V2 (`COM5`)**
-   - Płytka jest sflashowana najnowszym firmware (PlatformIO `esp32s3_v2`, `1158379 bytes` Flash).
-   - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu).
-   - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`), zweryfikowany na porcie szeregowym (`[Foxie] NTP synced: 19:54`).
-   - Pogoda z Open-Meteo odświeżana co 30 min przy połączeniu Wi-Fi; domyślna lokalizacja **Trąbki Wielkie** (`54.1697, 18.5397`), zweryfikowana na porcie szeregowym.
-   - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do 60 s (`1920044 B`) w PSRAM i dedykowanym taskiem FreeRTOS; zweryfikowane na `COM5` nagraniem testowym 2 s (`wav=65580 B`, `pcm=65536 B`, `dur=2048 ms`, `peak=3127`, `rms=247`).
-   - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error` (z krótkim kodem błędu na ekranie, np. `BRAK API URL`).
-   - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
+   - Płytka jest sflashowana najnowszym firmware (PlatformIO `esp32s3_v2`, zweryfikowano na `COM5`).
+   - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu). Gdy SSID jest zapisane, a Wi-Fi chwilowo niedostępne, urządzenie wchodzi w tryb offline `Ready` (gotowe do nagrywania na MicroSD), zamiast wymuszać ekran QR.
+   - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`) oraz pogoda Open-Meteo (domyślnie **Trąbki Wielkie**, odświeżana co 30 min na Wi-Fi).
+   - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do 60 s (`1920044 B`) w PSRAM i dedykowanym taskiem FreeRTOS; zweryfikowane na `COM5` nagraniem testowym 2 s (`wav=65580 B`, `pcm=65536 B`, `dur=2048 ms`, `peak=4180`, `rms=401`).
+   - **Kolejka offline MicroSD (`sd_queue.h/.cpp`):** 1-bit SDMMC (`CLK=39`, `D0=40`, `CMD=41`), zweryfikowane na `COM5` (`sdMounted=1`). W trybie offline lub przy błędzie sieci nagrania są atomowo zapisywane w `/foxie_queue/*.wav` (ekran `ZAPISANO SD`, wskaźnik `SD:N` na górnym pasku) i automatycznie wysyłane w tle po odzyskaniu Wi-Fi.
+   - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`.
+   - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`) i kartę SD (`SD_MMC.end()`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
 3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A)**
-   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 2.5 Flash -> commit Markdown do repozytorium GitHub z obsługą opcjonalnego `GITHUB_VAULT_PREFIX`).
+   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 2.5 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do repozytorium GitHub z obsługą `GITHUB_VAULT_PREFIX` oraz `GITHUB_INBOX_DIR`, domyślnie `raw/inbox`).
+   - Lokalny serwer LAN do testów E2E z urządzenia: `npm --prefix functions run dev` (`devServer.ts` ładujący `.env` + `.secret.local`, nasłuch na `0.0.0.0:8787`).
    - **Etap 2A (Webhook GitHub -> Firestore + API Wiki):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
    - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `9/9` przypadkach (`tsc` + `node --test`).
 
@@ -41,10 +42,11 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Etap 2B — Aplikacja webowa (`web/`):**
+1. **Test E2E pętli głos -> AI -> GitHub (prywatne lub testowe publiczne repo Obsidian):**
+   - Uzupełnić poza gitem `functions/.env` (`GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_BRANCH`, `GITHUB_VAULT_PREFIX`, `GITHUB_INBOX_DIR`) oraz `functions/.secret.local` (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`).
+   - Uruchomić `npm --prefix functions run dev` (albo wdrożyć na Firebase), wpisać adres `http://<LAN-IP>:8787` (lub URL Firebase) i `X-API-Key` w Captive Portalu (`192.168.4.1`) / `config.h`, a następnie przetestować nagranie z płytki (zarówno online, jak i offline przez kartę MicroSD z automatyczną synchronizacją po powrocie Wi-Fi).
+2. **Etap 2B — Aplikacja webowa (`web/`):**
    - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
-2. **Etap 1B — konfiguracja sekretów i test end-to-end backendu + pierwsza notatka głosowa z płytki:**
-   - Zainstalować `firebase-tools` (`npm install -g firebase-tools`), skonfigurować sekrety (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) poza gitem (`functions/.secret.local` / `functions/.env` lub Firebase Secret Manager) i przetestować pełny cykl `BOOT` (nagranie głosu) -> `Sending` -> `Saved` -> commit `.md` w `raw/inbox/` na GitHubie oraz sync webhookiem do Firestore.
 
 ## Pliki startowe do wczytania w nowym oknie
 
