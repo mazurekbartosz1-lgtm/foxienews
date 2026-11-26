@@ -85,7 +85,7 @@ constexpr uint32_t DEBOUNCE_MS = 35;
 constexpr uint32_t LONG_PRESS_MS = 2500;
 constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
 constexpr uint32_t ERROR_AUTO_RETURN_MS = 10000;
-constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
 constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
 constexpr uint32_t QUEUE_SYNC_RETRY_MS = 60000;
@@ -482,6 +482,21 @@ static bool fetchWeatherOpenMeteo() {
   return ok;
 }
 
+static void handleWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    Serial.printf("[WiFi] Disconnected (reason=%d)\n",
+                  static_cast<int>(info.wifi_sta_disconnected.reason));
+  }
+}
+
+static void configureStableWifiSta() {
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_13dBm);
+  WiFi.setAutoReconnect(true);
+}
+
 static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   stopCaptivePortal();
 
@@ -494,8 +509,9 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   Serial.printf("[Foxie] Connecting to Wi-Fi '%s'...\n", cfg.wifiSsid.c_str());
   currentLedPattern = LedPattern::WifiPulse;
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
+  configureStableWifiSta();
+  WiFi.disconnect(false);
+  delay(120);
   WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
 
   uint32_t startMs = millis();
@@ -889,25 +905,6 @@ static void renderRecordingTimerPartial() {
   } while (display.nextPage());
 }
 
-static void renderUploadProgressPartial() {
-  setDisplayPower(true);
-  display.setPartialWindow(24, UI_PROGRESS_Y - 2, 152, 16);
-  display.firstPage();
-  do {
-    display.fillRect(24, UI_PROGRESS_Y - 2, 152, 16, GxEPD_WHITE);
-    display.drawRect(28, UI_PROGRESS_Y, 144, 12, GxEPD_BLACK);
-    int16_t innerW = (140 * uploadProgress) / 100;
-    if (innerW > 0) {
-      display.fillRect(30, UI_PROGRESS_Y + 2, innerW, 8, GxEPD_BLACK);
-    }
-  } while (display.nextPage());
-}
-
-static void onUploadProgress(uint8_t percent) {
-  uploadProgress = percent;
-  renderUploadProgressPartial();
-}
-
 static bool isApiConfigured() {
   String url = cfg.apiUrl;
   url.trim();
@@ -952,7 +949,7 @@ static void enterState(DeviceState next, bool partial = false) {
       break;
     case DeviceState::Uploading:
       uploadStartedMs = millis();
-      uploadProgress = 15;
+      uploadProgress = 50;
       currentLedPattern = LedPattern::FastBlink;
       break;
     case DeviceState::Saved:
@@ -1104,15 +1101,15 @@ static void syncOfflineQueueNow() {
       return;
     }
 
-    uploadProgress = 15;
-    renderUploadProgressPartial();
+    // Disable e-Paper boost converter during TLS upload to avoid power rail sags
+    display.powerOff();
 
     CaptureUploadResult res = uploadWavCapture(
       cfg.apiUrl,
       cfg.apiKey,
       wavBuf,
       wavSize,
-      onUploadProgress
+      nullptr
     );
     free(wavBuf);
 
@@ -1335,6 +1332,7 @@ void setup() {
   setDisplayPower(true);
   Serial.begin(115200);
   delay(200);
+  WiFi.onEvent(handleWifiEvent);
   Serial.println();
   Serial.printf("[Foxie] Booting Waveshare V2 (wakeCause=%d)\n", static_cast<int>(wakeCause));
   if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
@@ -1370,8 +1368,7 @@ void setup() {
     enterState(DeviceState::WifiSetup);
   } else {
     prevWifiConnected = false;
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
+    configureStableWifiSta();
     lastWifiReconnectAttemptMs = millis();
     Serial.println("[Foxie] Offline mode -> Ready (SD queue available, hold BOOT 2.5s for setup)");
     enterState(DeviceState::Ready);
@@ -1483,12 +1480,13 @@ void loop() {
   } else if (!isSleeping && currentState == DeviceState::Uploading) {
     if (uploadPending) {
       uploadPending = false;
+      display.powerOff();
       CaptureUploadResult res = uploadWavCapture(
         cfg.apiUrl,
         cfg.apiKey,
         audioRecorder.wavData(),
         audioRecorder.wavSize(),
-        onUploadProgress
+        nullptr
       );
       if (res.ok) {
         lastErrorText[0] = '\0';
@@ -1547,7 +1545,7 @@ void loop() {
                (now - lastWifiReconnectAttemptMs) >= WIFI_RECONNECT_INTERVAL_MS) {
       lastWifiReconnectAttemptMs = now;
       Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
-      WiFi.mode(WIFI_STA);
+      configureStableWifiSta();
       WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
     }
 

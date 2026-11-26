@@ -1,13 +1,15 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T13:31:00Z
+updated_at: 2026-11-26T13:41:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Stabilizacja Wi-Fi podczas uploadu HTTPS (`firmware/`):**
+  - W [`main.cpp`](../../../firmware/src/main.cpp) i [`capture_client.cpp`](../../../firmware/src/capture_client.cpp) ustawiono `WIFI_POWER_13dBm`, `WiFi.setSleep(false)`, czysty reset przed `WiFi.begin()`, `display.powerOff()` przed transferem TLS (brak równoległego odświeżania HV e-Paper podczas wysyłki), pacing chunków (`delay(2)`) oraz logowanie `ARDUINO_EVENT_WIFI_STA_DISCONNECTED` (`reason=%d`). Wgrano na `COM5` i potwierdzono stabilne połączenie (`192.168.138.14`, NTP `14:40`).
 - **Przełączenie chmury Firebase na prywatne repo Obsidiana (`mazurekbartosz1-lgtm/obsydianandwiki`):**
   - Zainicjalizowano strukturę vaulta (`SCHEMA.md`, `wiki/index.md`, `wiki/log.md`, `raw/inbox/.gitkeep`) w prywatnym repozytorium `obsydianandwiki`.
   - Zaktualizowano `functions/.env` (`GITHUB_REPO=obsydianandwiki`, `GITHUB_VAULT_PREFIX=`), wykonano redeploy Cloud Function `api` (`--force` wraz z polityką czyszczenia Artifact Registry) i zweryfikowano zapis notatki w `obsydianandwiki/raw/inbox/`.

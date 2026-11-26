@@ -185,8 +185,9 @@ CaptureUploadResult uploadWavCapture(
     return res;
   }
 
-  Serial.printf("[Capture] Uploading %u B WAV to %s://%s:%u%s\n",
+  Serial.printf("[Capture] Uploading %u B WAV (RSSI %d dBm) to %s://%s:%u%s\n",
                 static_cast<unsigned>(wavSize),
+                WiFi.RSSI(),
                 ep.useTls ? "https" : "http",
                 ep.host.c_str(),
                 ep.port,
@@ -278,10 +279,15 @@ CaptureUploadResult uploadWavCapture(
       client->stop();
       res.errorMessage = "Socket write failed (body)";
       setShortError(res, "BLAD WYSYLKI");
+      Serial.printf("[Capture] Write error at %u/%u B (wifi=%d)\n",
+                    static_cast<unsigned>(offset),
+                    static_cast<unsigned>(wavSize),
+                    static_cast<int>(WiFi.status()));
       return res;
     }
 
     offset += chunk;
+    delay(2);
     if (onProgress != nullptr) {
       uint8_t pct = static_cast<uint8_t>(30 + ((offset * 55ULL) / wavSize));
       if (pct >= lastPct + 20) {
@@ -313,7 +319,8 @@ CaptureUploadResult uploadWavCapture(
     client->stop();
     res.errorMessage = "HTTP response timeout";
     setShortError(res, "TIMEOUT");
-    Serial.println("[Capture] ERROR: HTTP response timeout");
+    Serial.printf("[Capture] ERROR: HTTP response timeout (wifi=%d)\n",
+                  static_cast<int>(WiFi.status()));
     return res;
   }
 
