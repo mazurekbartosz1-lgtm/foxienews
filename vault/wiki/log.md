@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T15:52:00Z
+updated_at: 2026-11-26T16:25:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Przygotowanie handoffu do budowy chmurowych agentów przed Etapem 2B (`web/`):**
+  - Utworzono dedykowaną specyfikację i checklistę [`etap-2-agenci-chmurowi.md`](../../../vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md) (Agent Organizator `raw/inbox/ -> wiki/`, Agent Researcher otwierający Pull Requesty w Git, Agent Planowania z Google Calendar/Tasks).
+  - Zaktualizowano priorytety w [`status.md`](../../../vault/wiki/projekty/foxie-notes/status.md) oraz spisy treści (`vault/wiki/index.md`, `vault/wiki/projekty/foxie-notes/index.md`), aby nowe okno kontekstowe po haśle „kontynuujmy zadanie” od razu podjęło prace nad agentami w chmurze.
 - **Synchronizacja pełnej historii do prywatnego repo `obsydianandwiki` + potwierdzenie testu spacerowego:**
   - Dodano skrypt [`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) (`npm run sync:vault`) oraz zaktualizowano `AGENTS.md` i `.agents/skills/obsidian-commit-sync/SKILL.md`, aby każdy commit automatycznie synchronizował `vault/SCHEMA.md` i `vault/wiki/**` do prywatnego `mazurekbartosz1-lgtm/obsydianandwiki` (atomowy commit przez Git Data API bez naruszania `raw/inbox/`).
   - Potwierdzono udany test terenowy na spacerze: nagrania offline z karty MicroSD automatycznie zsynchronizowały się po powrocie do Wi-Fi jako pliki Markdown w `obsydianandwiki/raw/inbox/`.

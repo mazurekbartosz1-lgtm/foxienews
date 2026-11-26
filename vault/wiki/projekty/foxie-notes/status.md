@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T15:52:00Z
+updated_at: 2026-11-26T16:25:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -47,15 +47,16 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Etap 2B — Aplikacja webowa (`web/`) + wdrożenie Firestore/Hosting + Webhook GitHub:**
-   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
-   - Wdrożyć `firestore:rules` i `hosting`, podpiąć webhook GitHuba (`POST /api/webhook/github`) na `obsydianandwiki`.
-2. **Etap 3 (kolejny kierunek) — Chmurowy pipeline multi-agentowy nad `obsydianandwiki`:**
-   - Agent Triage / Organizator porządkujący pliki z `raw/inbox/` do spójnej struktury katalogów `wiki/` i `log.md`, oraz wyspecjalizowani agenci wykonawczy (Kalendarz / Google Tasks do planowania, Researcher otwierający Pull Requesty w Git do akceptacji).
+1. **Priorytet 1 — Chmurowi Agenci nad `obsydianandwiki` (`[[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi]]`) — realizowane PRZED `web/`:**
+   - W nowym oknie kontekstowym (po haśle użytkownika `„kontynuujmy zadanie”`) wczytaj `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md`, przeanalizuj aktualne pliki w `obsydianandwiki/raw/inbox/` i zacznij od **Kroku startowego + Fazy 1 (Agent Organizator)**:
+     - Ustal z użytkownikiem docelową taksonomię katalogów w `SCHEMA.md` oraz obsługę `raw/inbox/` vs `raw/processed/`, podepnij webhook GitHuba na `obsydianandwiki` -> `POST /api/webhook/github`.
+     - Następnie wdróż **Fazę 1** (Organizator porządkujący nowe notatki w podkatalogi `wiki/` + `index.md` + `log.md`), **Fazę 2** (Researcher otwierający Pull Requesty w Git do review) oraz **Fazę 3** (Agent Planowania z Google Calendar + Google Tasks).
+2. **Priorytet 2 (po uruchomieniu agentów) — Etap 2B: Aplikacja webowa (`web/`, `[[projekty/foxie-notes/zadania/etap-2-wiki-webapp]]`):**
+   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`) oraz wdrożyć `firestore:rules` i `hosting`.
 
 ## Pliki startowe do wczytania w nowym oknie
 
 1. `AGENTS.md` (reguły repozytorium ładowane automatycznie)
 2. `vault/wiki/projekty/foxie-notes/status.md` (ten plik)
-3. `vault/wiki/projekty/foxie-notes/zadania/etap-1-urzadzenie.md`
+3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md` (aktywny plan chmurowych agentów)
 4. `vault/wiki/log.md`
