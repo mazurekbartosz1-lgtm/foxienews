@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T13:00:00Z
+updated_at: 2026-11-26T13:21:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -22,8 +22,8 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu). Gdy SSID jest zapisane, a Wi-Fi chwilowo niedostępne, urządzenie wchodzi w tryb offline `Ready` (gotowe do nagrywania na MicroSD), zamiast wymuszać ekran QR.
    - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`) oraz pogoda Open-Meteo (domyślnie **Trąbki Wielkie**, odświeżana co 30 min na Wi-Fi).
    - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do 60 s (`1920044 B`) w PSRAM i dedykowanym taskiem FreeRTOS; zweryfikowane na `COM5` nagraniem testowym 2 s (`wav=65580 B`, `pcm=65536 B`, `dur=2048 ms`, `peak=4180`, `rms=401`).
-   - **Kolejka offline MicroSD (`sd_queue.h/.cpp`):** 1-bit SDMMC (`CLK=39`, `D0=40`, `CMD=41`), zweryfikowane na `COM5` (`sdMounted=1`). W trybie offline lub przy błędzie sieci nagrania są atomowo zapisywane w `/foxie_queue/*.wav` (ekran `ZAPISANO SD`, wskaźnik `SD:N` na górnym pasku) i automatycznie wysyłane w tle po odzyskaniu Wi-Fi.
-   - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`.
+   - **Kolejka offline MicroSD (`sd_queue.h/.cpp`):** 1-bit SDMMC (`CLK=39`, `D0=40`, `CMD=41`), zweryfikowane na `COM5` (`sdMounted=1`). W trybie offline lub przy błędzie sieci nagrania są atomowo zapisywane w `/foxie_queue/*.wav` (ekran `ZAPISANO SD`, wskaźnik `SD:N` na górnym pasku) i automatycznie wysyłane w tle po odzyskaniu Wi-Fi (`QUEUE_SYNC_RETRY_MS = 60000`). Błędy wysyłki/syncu trafiają na ekran `BLAD` z automatycznym powrotem do `Ready` po `10 s` (`ERROR_AUTO_RETURN_MS = 10000`).
+   - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`. **Zweryfikowano pełne E2E na żywo:** 2 nagrania z kolejki SD zostały automatycznie wysłane do Cloud Function `api`, przetworzone przez Gemini 3.8 Flash i zapisane jako `.md` w `vault/raw/inbox/` na GitHubie (`sdPending=2 -> 0`, `HTTP 201`).
    - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`) i kartę SD (`SD_MMC.end()`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
 3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
@@ -46,10 +46,9 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Wgranie firmware z URL chmurowym na płytkę (`COM5`) i test E2E:**
-   - Podłączyć Waveshare V2 przez USB (`COM5`), wgrać zbudowany firmware (`python -m platformio run -d firmware -t upload --upload-port COM5`) i nagrać pierwszą notatkę głosową przyciskiem `BOOT`, weryfikując automatyczny commit `.md` w `vault/raw/inbox/` na GitHubie (oraz tryb offline SD -> auto-sync).
-2. **Etap 2B — Aplikacja webowa (`web/`) + wdrożenie Firestore/Hosting:**
-   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`), a następnie wdrożyć `hosting` i `firestore:rules` oraz podpiąć webhook GitHuba.
+1. **Etap 2B — Aplikacja webowa (`web/`) + wdrożenie Firestore/Hosting + Webhook GitHub:**
+   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
+   - Wdrożyć `firestore:rules` i `hosting`, podpiąć webhook GitHuba (`POST /api/webhook/github`) oraz opcjonalnie przełączyć `GITHUB_REPO` na docelowe prywatne repo Obsidiana.
 
 ## Pliki startowe do wczytania w nowym oknie
 

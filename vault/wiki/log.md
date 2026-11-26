@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T13:00:00Z
+updated_at: 2026-11-26T13:21:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Pełny test E2E zaliczony (SD offline -> Firebase -> Gemini 3.8 Flash -> GitHub) + auto-powrót z `Error` po 10 s:**
+  - Po nadaniu uprawnień `Contents: Read and write` dla `GITHUB_TOKEN`, oba nagrania z kolejki MicroSD automatycznie zsynchronizowały się z płytki (`COM5`, `sdPending=2 -> 0`, `HTTP 201`) i utworzyły notatki `.md` w `vault/raw/inbox/` na GitHubie (`2026-11-26T13-18-59Z-waveshare-154-test-nagrywania.md` oraz `2026-11-26T13-20-24Z-waveshare-154-test-mikrofonu.md`).
+  - W [`main.cpp`](../../../firmware/src/main.cpp) dodano automatyczny powrót z ekranu `Error` do `Ready` po `10 s` (`ERROR_AUTO_RETURN_MS = 10000`), wyświetlanie błędów synchronizacji SD na ekranie `BLAD` oraz zwiększono interwał ponownej próby do `60 s` (`QUEUE_SYNC_RETRY_MS = 60000`).
 - **Wdrożenie Cloud Function `api` w Firebase (`gen-lang-client-0751515487`, `europe-west1`):**
   - Zainstalowano `firebase-tools@15.37.0`, zalogowano jako `mazurekbartosz1@gmail.com`, zapisano wszystkie 5 sekretów w Firebase Secret Manager i wdrożono funkcję `api` pod `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` (`GET /api/api/health` -> `200 OK`).
   - Zaktualizowano domyślny model w [`gemini.ts`](../../../functions/src/services/gemini.ts) na `gemini-3.8-flash` (zweryfikowano na żywo, `gemini-2.5-flash` zwraca `404` dla nowych kluczy), zweryfikowano `GITHUB_TOKEN` dla `mazurekbartosz1-lgtm/foxienews`, ustawiono `ALLOWED_USER_EMAIL` w [`firestore.rules`](../../../firestore.rules) i zaktualizowano lokalne `firmware/include/config.h`.

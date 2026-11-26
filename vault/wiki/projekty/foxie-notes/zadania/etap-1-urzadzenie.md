@@ -1,7 +1,7 @@
 ---
 title: Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)
 slug: projekty/foxie-notes/zadania/etap-1-urzadzenie
-updated_at: 2026-11-26T13:00:00Z
+updated_at: 2026-11-26T13:21:00Z
 tags: [zadania, etap-1, foxie-notes]
 ---
 
@@ -34,7 +34,7 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Zaimplementować walidację żądania `POST /api/capture` (`source`, `text` lub `audioBase64` `audio/wav`) #etap-1 #backend
 - [x] Zintegrować `@google/genai` (Gemini API) do transkrypcji audio WAV i sformatowania notatki (tytuł, podsumowanie, tagi, opcjonalne `- [ ]`) #etap-1 #backend
 - [x] Zintegrować `@octokit/rest` do tworzenia pliku `.md` z YAML frontmatterem w `raw/inbox/` w prywatnym repozytorium GitHub #etap-1 #backend
-- [ ] Przetestować endpoint lokalnie na emulatorach Firebase (`curl` + symulator) #etap-1 #backend
+- [x] Przetestować endpoint `POST /api/capture` (zweryfikowane E2E na żywo na Firebase `europe-west1` z płytki Waveshare V2 -> Gemini 3.8 Flash -> `vault/raw/inbox/`) #etap-1 #backend
 
 ## Etap 1C — Firmware Waveshare V2 (`firmware/`)
 - [x] Podpiąć sterownik ekranu 1.54" e-Paper 200×200 i renderowanie bitmap z `ui_assets.h` #etap-1 #firmware

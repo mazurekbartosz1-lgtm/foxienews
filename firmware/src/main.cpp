@@ -84,10 +84,11 @@ struct FoxieConfig {
 constexpr uint32_t DEBOUNCE_MS = 35;
 constexpr uint32_t LONG_PRESS_MS = 2500;
 constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
+constexpr uint32_t ERROR_AUTO_RETURN_MS = 10000;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
 constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
-constexpr uint32_t QUEUE_SYNC_RETRY_MS = 30000;
+constexpr uint32_t QUEUE_SYNC_RETRY_MS = 60000;
 constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 60000;
 constexpr uint8_t EPD_FULL_REFRESH_EVERY = 30;
 constexpr uint8_t DNS_PORT = 53;
@@ -118,6 +119,7 @@ static uint32_t recordingStartedMs = 0;
 static uint32_t lastRecDrawMs = 0;
 static uint32_t uploadStartedMs = 0;
 static uint32_t savedEnteredMs = 0;
+static uint32_t errorEnteredMs = 0;
 static uint32_t lastActivityMs = 0;
 static uint32_t lastWeatherFetchMs = 0;
 static uint32_t lastClockCheckMs = 0;
@@ -927,6 +929,7 @@ static void enterState(DeviceState next, bool partial = false) {
   if (next == DeviceState::Recording) {
     if (!audioRecorder.startRecording()) {
       snprintf(lastErrorText, sizeof(lastErrorText), "BLAD AUDIO");
+      errorEnteredMs = millis();
       currentState = DeviceState::Error;
       currentLedPattern = LedPattern::WifiPulse;
       Serial.println("[Foxie] State -> Error (audio start failed)");
@@ -957,6 +960,7 @@ static void enterState(DeviceState next, bool partial = false) {
       currentLedPattern = LedPattern::SolidOn;
       break;
     case DeviceState::Error:
+      errorEnteredMs = millis();
       currentLedPattern = LedPattern::WifiPulse;
       break;
     case DeviceState::WifiSetup:
@@ -1121,12 +1125,13 @@ static void syncOfflineQueueNow() {
                     filePath.c_str(),
                     res.shortError[0] ? res.shortError : "ERR");
       lastQueueSyncAttemptMs = millis();
-      if (!isTransientUploadError(res.httpStatus) && res.httpStatus > 0) {
-        snprintf(lastErrorText, sizeof(lastErrorText), "%s", res.shortError);
-        enterState(DeviceState::Error);
-      } else {
-        enterState(DeviceState::Ready);
-      }
+      snprintf(
+        lastErrorText,
+        sizeof(lastErrorText),
+        "%s",
+        res.shortError[0] ? res.shortError : "BLAD SYNC"
+      );
+      enterState(DeviceState::Error);
       return;
     }
   }
@@ -1512,6 +1517,11 @@ void loop() {
   } else if (!isSleeping && currentState == DeviceState::Saved) {
     if (now - savedEnteredMs >= SAVED_AUTO_RETURN_MS) {
       savedToSdFlag = false;
+      enterState(DeviceState::Ready);
+    }
+  } else if (!isSleeping && currentState == DeviceState::Error) {
+    if (now - errorEnteredMs >= ERROR_AUTO_RETURN_MS) {
+      lastErrorText[0] = '\0';
       enterState(DeviceState::Ready);
     }
   } else if (!isSleeping && currentState == DeviceState::Ready) {
