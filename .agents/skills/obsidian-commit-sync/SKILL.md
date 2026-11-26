@@ -35,9 +35,19 @@ Run these steps **before** running `git commit`:
 
 ## Procedure B: Resume in a New Context Window
 
-When starting work in a fresh context window or after switching machines:
+Triggered automatically at the start of any new conversation or when the user says `"kontynuujmy zadanie"`, `"kontynuuj"`, `"jedziemy dalej"`, or `"co dalej"`:
 
 1. Read `vault/wiki/projekty/foxie-notes/status.md` completely first.
-2. Read the active task file linked under **Następny krok** (typically `vault/wiki/projekty/foxie-notes/zadania/etap-1-urzadzenie.md` or `etap-2-wiki-webapp.md`).
+2. Read the #1 active task checklist linked under **Następny krok (Next Action)** / **Pliki startowe do wczytania w nowym oknie** (e.g. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md`).
 3. Skim the top section of `vault/wiki/log.md` for recent commits and architectural decisions.
-4. Confirm git state with `git status --short` and `git log --oneline -n 5`, then begin the next task directly without re-scanning unrelated files.
+4. Confirm git state with `git status --short` and `git log --oneline -n 5`, then begin directly from the first unchecked `- [ ]` item in the active checklist without asking the user to re-explain project history.
+
+## Procedure C: Prepare Session Handoff (New Window / Any Machine)
+
+Run when ending a milestone, switching tasks, or preparing to resume in a fresh context window:
+
+1. Ensure `vault/wiki/projekty/foxie-notes/status.md` clearly states Priority #1 under **Następny krok** and lists the exact active `zadania/*.md` checklist under **Pliki startowe do wczytania w nowym oknie**.
+2. Tick completed `- [x]` checkboxes and verify the next unchecked `- [ ]` starting items in `vault/wiki/projekty/<projekt>/zadania/*.md`.
+3. Add a timestamped handoff note at the top of today's section in `vault/wiki/log.md`.
+4. Run `npm run sync:vault` so the private Obsidian repository (`obsydianandwiki`) matches `vault/SCHEMA.md` and `vault/wiki/**`.
+5. Run the Security Gate (`git check-ignore -v firmware/include/config.h functions/.env functions/.secret.local .firebaserc` + `git status --short`), commit all `vault/` updates in `foxienews`, and `git push origin main` so any fresh window or machine can resume immediately on `"kontynuujmy zadanie"`.

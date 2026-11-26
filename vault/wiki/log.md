@@ -1,13 +1,15 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T16:25:00Z
+updated_at: 2026-11-26T16:30:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Utrwalenie automatycznego workflow wznowienia i handoffu (`AGENTS.md`, `SKILL.md`):**
+  - Rozszerzono [`AGENTS.md`](../../../AGENTS.md) i [`obsidian-commit-sync`](../../../.agents/skills/obsidian-commit-sync/SKILL.md) o stałe procedury szybkiego wznowienia (hasło `„kontynuujmy zadanie”` ładuje `status.md` + aktywną checklistę z `zadania/*.md` + `log.md` i startuje od pierwszego `[ ]`) oraz pełnego handoffu (aktualizacja `status.md`, `npm run sync:vault` do `obsydianandwiki`, commit i push `foxienews` na `origin/main`).
 - **Przygotowanie handoffu do budowy chmurowych agentów przed Etapem 2B (`web/`):**
   - Utworzono dedykowaną specyfikację i checklistę [`etap-2-agenci-chmurowi.md`](../../../vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md) (Agent Organizator `raw/inbox/ -> wiki/`, Agent Researcher otwierający Pull Requesty w Git, Agent Planowania z Google Calendar/Tasks).
   - Zaktualizowano priorytety w [`status.md`](../../../vault/wiki/projekty/foxie-notes/status.md) oraz spisy treści (`vault/wiki/index.md`, `vault/wiki/projekty/foxie-notes/index.md`), aby nowe okno kontekstowe po haśle „kontynuujmy zadanie” od razu podjęło prace nad agentami w chmurze.
