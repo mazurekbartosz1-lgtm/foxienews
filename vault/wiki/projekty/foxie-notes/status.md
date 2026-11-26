@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T13:55:00Z
+updated_at: 2026-11-26T15:52:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -22,13 +22,14 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu). Gdy SSID jest zapisane, a Wi-Fi chwilowo niedostępne, urządzenie wchodzi w tryb offline `Ready` (gotowe do nagrywania na MicroSD), zamiast wymuszać ekran QR. Przy `reason=208` (PMF comeback na routerze) automatycznie ponawia próbę po `2.5 s`, a przejście paska stanu na `BRAK WI-FI` ma `12 s` debounce i odświeża tylko pasek stanu (`renderStatusBarPartial`) bez pełnych mrugnięć ekranu.
    - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`) oraz pogoda Open-Meteo (domyślnie **Trąbki Wielkie**, odświeżana co 30 min na Wi-Fi i zapisywana w NVS `w_valid`/`w_temp`/`w_code`, aby nie znikała po restarcie).
    - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do 60 s (`1920044 B`) w PSRAM i dedykowanym taskiem FreeRTOS; zweryfikowane na `COM5` nagraniem testowym 2 s (`wav=65580 B`, `pcm=65536 B`, `dur=2048 ms`, `peak=4180`, `rms=401`).
-   - **Kolejka offline MicroSD (`sd_queue.h/.cpp`):** 1-bit SDMMC (`CLK=39`, `D0=40`, `CMD=41`), zweryfikowane na `COM5` (`sdMounted=1`). W trybie offline lub przy błędzie sieci nagrania są atomowo zapisywane w `/foxie_queue/*.wav` (ekran `ZAPISANO SD`, wskaźnik `SD:N` na górnym pasku) i automatycznie wysyłane w tle po odzyskaniu Wi-Fi (`QUEUE_SYNC_RETRY_MS = 60000`). Błędy wysyłki/syncu trafiają na ekran `BLAD` z automatycznym powrotem do `Ready` po `10 s` (`ERROR_AUTO_RETURN_MS = 10000`).
+   - **Kolejka offline MicroSD (`sd_queue.h/.cpp`):** 1-bit SDMMC (`CLK=39`, `D0=40`, `CMD=41`), zweryfikowane na `COM5` (`sdMounted=1`). W trybie offline lub przy błędzie sieci nagrania są atomowo zapisywane w `/foxie_queue/*.wav` (ekran `ZAPISANO SD`, wskaźnik `SD:N` na górnym pasku) i automatycznie wysyłane w tle po odzyskaniu Wi-Fi (`QUEUE_SYNC_RETRY_MS = 60000`). **Terenowy test spacerowy offline zaliczony** — nagrania z karty SD automatycznie zsynchronizowały się po powrocie w zasięg Wi-Fi do `obsydianandwiki/raw/inbox/`. Błędy wysyłki/syncu trafiają na ekran `BLAD` z automatycznym powrotem do `Ready` po `10 s` (`ERROR_AUTO_RETURN_MS = 10000`).
    - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B` z krótkim pacingiem `delay(2)` i buforami `b64Out` / `WiFiClientSecure` przeniesionymi na stertę oraz powiększonym stosem `ARDUINO_LOOP_STACK_SIZE=16384`, co wyeliminowało `Stack canary watchpoint triggered (loopTask)` podczas TLS handshake), nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`. Przed transferem TLS wyłączana jest przetwornica HV ekranu (`display.powerOff()`), a Wi-Fi pracuje z `WIFI_POWER_15dBm` i `WiFi.setSleep(false)`. **Zweryfikowano na `COM5`** (`stackFree=12032 B` po uploadzie HTTPS, `wifi=3` stabilne, `HTTP 201` do `obsydianandwiki/raw/inbox/`).
    - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`) i kartę SD (`SD_MMC.end()`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
 3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
    - Funkcja Cloud Functions v2 `api` (`europe-west1`, Node.js 22) wdrożona na `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` i zweryfikowana na żywo (`GET /api/api/health` -> `200 {"ok":true,"service":"foxie-api"}`).
    - Wszystkie 5 sekretów (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) zapisane w Firebase Secret Manager oraz lokalnie w gitignorowanym `functions/.secret.local`; docelowy vault chmury przełączony na prywatne repo **`GITHUB_OWNER=mazurekbartosz1-lgtm`, `GITHUB_REPO=obsydianandwiki`**, `GITHUB_VAULT_PREFIX=` (`raw/inbox/`), `GEMINI_MODEL=gemini-3.8-flash` w `functions/.env`; `ALLOWED_USER_EMAIL` ustawione w `firestore.rules`.
+   - Automatyczna synchronizacja dokumentacji (`vault/SCHEMA.md` + `vault/wiki/**`) do prywatnego `obsydianandwiki` przez `npm run sync:vault` ([`scripts/sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs)) jako pojedynczy atomowy commit bez naruszania `raw/inbox/`.
    - `firmware/include/config.h` (chronione przez `.gitignore`) zaktualizowane o docelowy URL chmurowy i `DEVICE_API_KEY`.
    - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 3.8 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do repozytorium GitHub z obsługą `GITHUB_VAULT_PREFIX` oraz `GITHUB_INBOX_DIR`, domyślnie `raw/inbox`).
    - Lokalny serwer LAN do testów E2E z urządzenia: `npm --prefix functions run dev` (`devServer.ts` ładujący `.env` + `.secret.local`, nasłuch na `0.0.0.0:8787`).
@@ -48,7 +49,9 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 1. **Etap 2B — Aplikacja webowa (`web/`) + wdrożenie Firestore/Hosting + Webhook GitHub:**
    - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
-   - Wdrożyć `firestore:rules` i `hosting`, podpiąć webhook GitHuba (`POST /api/webhook/github`) oraz opcjonalnie przełączyć `GITHUB_REPO` na docelowe prywatne repo Obsidiana.
+   - Wdrożyć `firestore:rules` i `hosting`, podpiąć webhook GitHuba (`POST /api/webhook/github`) na `obsydianandwiki`.
+2. **Etap 3 (kolejny kierunek) — Chmurowy pipeline multi-agentowy nad `obsydianandwiki`:**
+   - Agent Triage / Organizator porządkujący pliki z `raw/inbox/` do spójnej struktury katalogów `wiki/` i `log.md`, oraz wyspecjalizowani agenci wykonawczy (Kalendarz / Google Tasks do planowania, Researcher otwierający Pull Requesty w Git do akceptacji).
 
 ## Pliki startowe do wczytania w nowym oknie
 

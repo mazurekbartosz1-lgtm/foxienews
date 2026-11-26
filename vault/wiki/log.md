@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T13:55:00Z
+updated_at: 2026-11-26T15:52:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Synchronizacja pełnej historii do prywatnego repo `obsydianandwiki` + potwierdzenie testu spacerowego:**
+  - Dodano skrypt [`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) (`npm run sync:vault`) oraz zaktualizowano `AGENTS.md` i `.agents/skills/obsidian-commit-sync/SKILL.md`, aby każdy commit automatycznie synchronizował `vault/SCHEMA.md` i `vault/wiki/**` do prywatnego `mazurekbartosz1-lgtm/obsydianandwiki` (atomowy commit przez Git Data API bez naruszania `raw/inbox/`).
+  - Potwierdzono udany test terenowy na spacerze: nagrania offline z karty MicroSD automatycznie zsynchronizowały się po powrocie do Wi-Fi jako pliki Markdown w `obsydianandwiki/raw/inbox/`.
 - **Naprawa crasha stosu przy wysyłce HTTPS, `reason=208` Wi-Fi i migania ekranu (`firmware/`):**
   - Zdiagnozowano na `COM5` główną przyczynę rozłączania podczas wysyłania i znikania pogody: `Stack canary watchpoint triggered (loopTask)` w [`capture_client.cpp`](../../../firmware/src/capture_client.cpp) (bufor `b64Out[4100]` + `WiFiClientSecure` + `WiFiClient` na domyślnym stosie `8192 B` przepełniały stos podczas TLS handshake, powodując cichy reset płytki i `reason=208` przy ponownym łączeniu).
   - Powiększono stos `loopTask` do `16384 B` w [`platformio.ini`](../../../firmware/platformio.ini), przeniesiono `b64Out` oraz klientów TCP/TLS na stertę (`std::unique_ptr`), dodano w [`main.cpp`](../../../firmware/src/main.cpp) obsługę comeback delay (`2.5 s`) przy `reason=208`, zapis pogody w NVS (`w_valid`/`w_temp`/`w_code`), naprawiono underflow `now - lastWeatherFetchMs` oraz zastąpiono pełne odświeżanie przy zmianie Wi-Fi częściowym odświeżaniem samego paska stanu (`renderStatusBarPartial`) z `12 s` debounce. Zweryfikowano na `COM5` (`wifi=3`, `stackFree=12032 B`, upload HTTPS `HTTP 201` do `obsydianandwiki/raw/inbox/` bez resetu ani migania).

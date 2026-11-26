@@ -27,10 +27,11 @@ Run these steps **before** running `git commit`:
    - Update checklist items (`[ ]` -> `[x]`) in the relevant `vault/wiki/projekty/<projekt>/zadania/*.md` files for completed tasks.
    - Prepend or append a concise timestamped entry under today's date in `vault/wiki/log.md` summarizing the changes in this commit.
    - If any new wiki page was created, link it in `vault/wiki/projekty/<projekt>/index.md` and `vault/wiki/index.md`.
-4. **Stage, re-verify, and commit**
+4. **Stage, re-verify, commit, and sync private Obsidian repo**
    - Run `git add .` and inspect `git status --short` to confirm `vault/` updates are staged and zero secrets/build artifacts (`node_modules/`, `.pio/`, `config.h`, `.env`) are included.
    - Commit with a descriptive Conventional Commits message (`git commit -m "..."`).
-   - Push only when requested (`git push origin main`).
+   - Run `npm run sync:vault` (`scripts/sync-obsidian-vault.mjs`, with `BypassSandbox: true` if network is sandboxed) so `vault/SCHEMA.md` and `vault/wiki/**` are synced in one atomic commit to the private Obsidian repository configured in `functions/.env` (preserves `raw/inbox/` and never prints tokens).
+   - Push the code repository only when requested (`git push origin main`).
 
 ## Procedure B: Resume in a New Context Window
 
