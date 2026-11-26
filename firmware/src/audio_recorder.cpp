@@ -150,8 +150,65 @@ bool AudioRecorder::configureEs8311Registers() {
   return ok;
 }
 
+bool AudioRecorder::wakeCodec() {
+  if (codecPowered_) {
+    return true;
+  }
+
+  // CRITICAL on Waveshare V2: enable ES8311 power rail (active-LOW) BEFORE Wire.begin()
+  pinMode(PIN_AUDIO_PWR, OUTPUT);
+  digitalWrite(PIN_AUDIO_PWR, AUDIO_PWR_ON_LEVEL);
+  pinMode(PIN_AUDIO_PA_CTRL, OUTPUT);
+  digitalWrite(PIN_AUDIO_PA_CTRL, LOW);
+  delay(20);
+
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 100000);
+
+  if (rxHandle_ == nullptr && !initI2sRx()) {
+    powerDownCodec();
+    return false;
+  }
+
+  esp_err_t err = i2s_channel_enable(rxHandle_);
+  if (err != ESP_OK) {
+    Serial.printf("[Audio] i2s_channel_enable failed: %d\n", static_cast<int>(err));
+    powerDownCodec();
+    return false;
+  }
+  delay(10);
+
+  if (!configureEs8311Registers()) {
+    Serial.println("[Audio] ERROR: Failed to configure ES8311 registers");
+    powerDownCodec();
+    return false;
+  }
+
+  codecPowered_ = true;
+  return true;
+}
+
+void AudioRecorder::powerDownCodec() {
+  if (rxHandle_ != nullptr) {
+    i2s_channel_disable(rxHandle_);
+  }
+
+  if (codecPowered_) {
+    writeReg(0x00, 0x00);
+    writeReg(0x0D, 0xFC);
+    writeReg(0x0E, 0xFF);
+    Wire.end();
+    codecPowered_ = false;
+  }
+
+  pinMode(PIN_AUDIO_PA_CTRL, OUTPUT);
+  digitalWrite(PIN_AUDIO_PA_CTRL, LOW);
+  pinMode(PIN_AUDIO_PWR, OUTPUT);
+  digitalWrite(PIN_AUDIO_PWR, AUDIO_PWR_OFF_LEVEL);
+}
+
 bool AudioRecorder::begin() {
   ready_ = false;
+  codecPowered_ = false;
 
   // CRITICAL on Waveshare V2: enable ES8311 power rail (active-LOW) BEFORE Wire.begin()
   pinMode(PIN_AUDIO_PWR, OUTPUT);
@@ -161,12 +218,14 @@ bool AudioRecorder::begin() {
   delay(25);
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 100000);
+  codecPowered_ = true;
 
   uint8_t id1 = 0;
   uint8_t id2 = 0;
   uint8_t rev = 0;
   if (!readReg(0xFD, id1) || !readReg(0xFE, id2) || !readReg(0xFF, rev)) {
     Serial.println("[Audio] ERROR: ES8311 not responding on I2C (0x18)");
+    powerDownCodec();
     return false;
   }
   chipIdHigh_ = id1;
@@ -175,6 +234,7 @@ bool AudioRecorder::begin() {
   Serial.printf("[Audio] ES8311 detected: ID=0x%02X%02X rev=0x%02X\n", id1, id2, rev);
   if (id1 != 0x83 || id2 != 0x11) {
     Serial.println("[Audio] ERROR: Unexpected ES8311 chip ID");
+    powerDownCodec();
     return false;
   }
 
@@ -182,6 +242,7 @@ bool AudioRecorder::begin() {
     wavBuffer_ = static_cast<uint8_t*>(ps_malloc(foxie_audio::WAV_BUFFER_BYTES));
     if (wavBuffer_ == nullptr) {
       Serial.println("[Audio] ERROR: Failed to allocate WAV buffer in PSRAM");
+      powerDownCodec();
       return false;
     }
     Serial.printf("[Audio] PSRAM WAV buffer allocated: %u bytes (free PSRAM: %lu bytes)\n",
@@ -190,6 +251,7 @@ bool AudioRecorder::begin() {
   }
 
   if (rxHandle_ == nullptr && !initI2sRx()) {
+    powerDownCodec();
     return false;
   }
 
@@ -197,13 +259,14 @@ bool AudioRecorder::begin() {
   esp_err_t err = i2s_channel_enable(rxHandle_);
   if (err != ESP_OK) {
     Serial.printf("[Audio] i2s_channel_enable failed: %d\n", static_cast<int>(err));
+    powerDownCodec();
     return false;
   }
   delay(10);
 
   if (!configureEs8311Registers()) {
     Serial.println("[Audio] ERROR: Failed to configure ES8311 registers");
-    i2s_channel_disable(rxHandle_);
+    powerDownCodec();
     return false;
   }
 
@@ -226,7 +289,8 @@ bool AudioRecorder::begin() {
                 peak,
                 rms);
 
-  i2s_channel_disable(rxHandle_);
+  // Power down codec immediately until user starts recording
+  powerDownCodec();
   ready_ = true;
   return true;
 }
@@ -267,7 +331,7 @@ void AudioRecorder::captureTaskLoop() {
 }
 
 bool AudioRecorder::startRecording() {
-  if (!ready_ || rxHandle_ == nullptr || wavBuffer_ == nullptr) {
+  if (!ready_ || wavBuffer_ == nullptr) {
     Serial.println("[Audio] startRecording rejected: audio not ready");
     return false;
   }
@@ -275,14 +339,13 @@ bool AudioRecorder::startRecording() {
     return false;
   }
 
-  pcmBytesWritten_ = 0;
-  reachedLimit_ = false;
-
-  esp_err_t err = i2s_channel_enable(rxHandle_);
-  if (err != ESP_OK) {
-    Serial.printf("[Audio] i2s_channel_enable failed: %d\n", static_cast<int>(err));
+  if (!wakeCodec()) {
+    Serial.println("[Audio] startRecording rejected: codec wake failed");
     return false;
   }
+
+  pcmBytesWritten_ = 0;
+  reachedLimit_ = false;
 
   // Discard initial transient frame (~32 ms)
   uint8_t discardBuf[PROBE_READ_BYTES];
@@ -301,7 +364,7 @@ bool AudioRecorder::startRecording() {
 
   if (created != pdPASS) {
     recordingActive_ = false;
-    i2s_channel_disable(rxHandle_);
+    powerDownCodec();
     Serial.println("[Audio] ERROR: Failed to create audio_rec task");
     return false;
   }
@@ -372,6 +435,7 @@ bool AudioRecorder::stopRecording(foxie_audio::CaptureStats& outStats) {
                 static_cast<unsigned long>(outStats.wavBytes),
                 outStats.peakAbs,
                 outStats.rms);
+  powerDownCodec();
   return true;
 }
 
@@ -381,20 +445,12 @@ void AudioRecorder::prepareForDeepSleep() {
     stopRecording(discarded);
   }
 
+  powerDownCodec();
+
   if (rxHandle_ != nullptr) {
-    i2s_channel_disable(rxHandle_);
     i2s_del_channel(rxHandle_);
     rxHandle_ = nullptr;
   }
 
-  if (ready_) {
-    writeReg(0x00, 0x00);
-    writeReg(0x0D, 0xFC);
-    writeReg(0x0E, 0xFF);
-  }
-
-  Wire.end();
-  digitalWrite(PIN_AUDIO_PA_CTRL, LOW);
-  digitalWrite(PIN_AUDIO_PWR, AUDIO_PWR_OFF_LEVEL);
   ready_ = false;
 }

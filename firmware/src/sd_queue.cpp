@@ -26,7 +26,42 @@ bool isWavFileName(const String& path) {
 
 } // namespace
 
+bool SdQueue::ensureMounted() {
+  if (mounted_) {
+    return true;
+  }
+  if (!cardAvailable_) {
+    return false;
+  }
+
+  pinMode(PIN_SD_CMD, INPUT_PULLUP);
+  pinMode(PIN_SD_D0, INPUT_PULLUP);
+
+  if (!SD_MMC.setPins(PIN_SD_CLK, PIN_SD_CMD, PIN_SD_D0)) {
+    return false;
+  }
+
+  if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) {
+    return false;
+  }
+
+  if (SD_MMC.cardType() == CARD_NONE) {
+    SD_MMC.end();
+    return false;
+  }
+
+  mounted_ = true;
+  return true;
+}
+
+void SdQueue::suspend() {
+  if (!mounted_) return;
+  SD_MMC.end();
+  mounted_ = false;
+}
+
 bool SdQueue::begin() {
+  cardAvailable_ = false;
   mounted_ = false;
   pendingCount_ = 0;
 
@@ -58,6 +93,7 @@ bool SdQueue::begin() {
     }
   }
 
+  cardAvailable_ = true;
   mounted_ = true;
   refreshCount();
 
@@ -65,11 +101,15 @@ bool SdQueue::begin() {
   Serial.printf("[SD] Mounted 1-bit SDMMC (%llu MB), pending WAVs: %u\n",
                 static_cast<unsigned long long>(cardSizeMb),
                 pendingCount_);
+
+  if (pendingCount_ == 0) {
+    suspend();
+  }
   return true;
 }
 
 uint16_t SdQueue::refreshCount() {
-  if (!mounted_) {
+  if (!ensureMounted()) {
     pendingCount_ = 0;
     return 0;
   }
@@ -101,7 +141,7 @@ uint16_t SdQueue::refreshCount() {
 
 bool SdQueue::enqueueWav(const uint8_t* wavData, size_t wavSize, String& outPath) {
   outPath = "";
-  if (!mounted_ || wavData == nullptr || wavSize <= 44) {
+  if (wavData == nullptr || wavSize <= 44 || !ensureMounted()) {
     return false;
   }
 
@@ -164,6 +204,7 @@ bool SdQueue::enqueueWav(const uint8_t* wavData, size_t wavSize, String& outPath
   if (!SD_MMC.rename(tmpPath, finalPath)) {
     Serial.printf("[SD] ERROR: Rename %s -> %s failed\n", tmpPath.c_str(), finalPath.c_str());
     SD_MMC.remove(tmpPath);
+    suspend();
     return false;
   }
 
@@ -173,12 +214,13 @@ bool SdQueue::enqueueWav(const uint8_t* wavData, size_t wavSize, String& outPath
                 finalPath.c_str(),
                 static_cast<unsigned>(wavSize),
                 pendingCount_);
+  suspend();
   return true;
 }
 
 bool SdQueue::peekOldest(String& outPath) {
   outPath = "";
-  if (!mounted_) return false;
+  if (!ensureMounted()) return false;
 
   File dir = SD_MMC.open(QUEUE_DIR);
   if (!dir || !dir.isDirectory()) {
@@ -214,7 +256,7 @@ bool SdQueue::peekOldest(String& outPath) {
 bool SdQueue::readFileToPsram(const String& path, uint8_t*& outBuf, size_t& outSize) {
   outBuf = nullptr;
   outSize = 0;
-  if (!mounted_ || path.isEmpty()) return false;
+  if (path.isEmpty() || !ensureMounted()) return false;
 
   File file = SD_MMC.open(path, FILE_READ);
   if (!file || file.isDirectory()) {
@@ -263,7 +305,7 @@ bool SdQueue::readFileToPsram(const String& path, uint8_t*& outBuf, size_t& outS
 }
 
 bool SdQueue::removeFile(const String& path) {
-  if (!mounted_ || path.isEmpty()) return false;
+  if (path.isEmpty() || !ensureMounted()) return false;
   bool removed = SD_MMC.remove(path);
   refreshCount();
   Serial.printf("[SD] Removed %s (ok=%d, pending=%u)\n",
@@ -274,7 +316,5 @@ bool SdQueue::removeFile(const String& path) {
 }
 
 void SdQueue::prepareForDeepSleep() {
-  if (!mounted_) return;
-  SD_MMC.end();
-  mounted_ = false;
+  suspend();
 }

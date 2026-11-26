@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T18:40:00Z
+updated_at: 2026-11-26T18:55:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Merge PR #1, optymalizacja baterii Waveshare V2 (`COM5`) oraz kod Agenta Planowania (Calendar + Tasks + Google Listy):**
+  - Scalono **PR #1** (`db6393d`) w `obsydianandwiki` i potwierdzono synchronizację raportu `pomysly/bateria-lipo-obudowa-waveshare/research` w `GET /api/api/wiki/index`.
+  - Przebudowano zarządzanie energią w `firmware/` ([`audio_recorder.cpp`](../../../firmware/src/audio_recorder.cpp), [`sd_queue.cpp`](../../../firmware/src/sd_queue.cpp), [`main.cpp`](../../../firmware/src/main.cpp)): power-gating kodeka ES8311 (`wakeCodec()`/`powerDownCodec()`), on-demand mount SDMMC (`suspend()`), auto-hibernacja po `3 min` (`INACTIVITY_SLEEP_MS`), profil spoczynkowy **80 MHz** + `WIFI_PS_MAX_MODEM` (offline `WiFi.mode(WIFI_OFF)` co `60 s`), `display.powerOff()` po odświeżeniach, uśredniony pomiar baterii oraz `gpio_hold_en()` na wszystkich pinach zasilania w `deep_sleep`. Sflashowano na `COM5` i potwierdzono testem (`cpuMhz=80`, `batMv=3678`, nagranie 2 s `65580 B`, `peak=604`).
+  - Zaimplementowano **Fazę 3 — Agenta Planowania**: [`googleWorkspace.ts`](../../../functions/src/services/googleWorkspace.ts), [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts) (Calendar z progiem `0.75`, Tasks `@default`, tematyczne Google Listy, dopisanie `## Synchronizacja Google` w `wiki/`), endpoint `POST /api/agents/plan` w [`app.ts`](../../../functions/src/app.ts), podpięcie do [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts), skrypt [`google-oauth-setup.mjs`](../../../scripts/google-oauth-setup.mjs) oraz testy [`planningAgent.test.ts`](../../../functions/src/__tests__/planningAgent.test.ts) (`18/18` w `npm --prefix functions test`).
 - **Faza 2 chmurowych agentów zakończona — Agent Researcher (Google Search grounding -> Pull Request):**
   - Zaimplementowano [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts) z wyszukiwaniem Google Search (`tools: [{ googleSearch: {} }]` na `gemini-3.8-flash` + fallback bez narzędzia), ekstrakcją źródeł z `groundingMetadata`, gałęziami `agent/research-<slug>` i otwieraniem bezkonfliktowych Pull Requestów w `obsydianandwiki` (`wiki/pomysly/<slug>/research.md`).
   - Podpięto Researchera do [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) (auto-uruchamianie dla `intent === "research-idea"` z zapisem metadanych PR w `inbox_jobs`), rozszerzono [`github.ts`](../../../functions/src/services/github.ts) o `findOpenPullRequest` oraz dodano endpoint `POST /api/agents/research` w [`app.ts`](../../../functions/src/app.ts).

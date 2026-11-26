@@ -74,6 +74,10 @@ export interface InboxJobDoc {
   researchPrNumber?: number;
   researchBranch?: string;
   researchReportPath?: string;
+  googleEventIds?: string[];
+  googleTaskIds?: string[];
+  googleListsUsed?: string[];
+  planningStatus?: "synced" | "skipped" | "error";
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -92,6 +96,30 @@ export interface ResearchRunResult {
   reason?: string;
 }
 
+export interface PlanningRunResult {
+  status: "synced" | "skipped" | "error";
+  calendarEventsCreated: Array<{
+    id: string;
+    summary: string;
+    htmlLink?: string;
+    start: string;
+  }>;
+  tasksCreated: Array<{
+    id: string;
+    title: string;
+    listName: string;
+    due?: string;
+  }>;
+  listItemsCreated: Array<{
+    id: string;
+    title: string;
+    listName: string;
+  }>;
+  skippedLowConfidenceEvents?: number;
+  commitSha?: string;
+  reason?: string;
+}
+
 export interface OrganizeInboxResult {
   inboxPath: string;
   status: "processed" | "skipped" | "error";
@@ -100,5 +128,6 @@ export interface OrganizeInboxResult {
   processedPath?: string;
   commitSha?: string;
   research?: ResearchRunResult;
+  planning?: PlanningRunResult;
   reason?: string;
 }

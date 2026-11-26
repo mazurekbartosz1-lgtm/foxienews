@@ -1,9 +1,19 @@
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
-import type { NoteIntent, OrganizeInboxResult, ResearchRunResult } from "../types/api.js";
+import type {
+  NoteIntent,
+  OrganizeInboxResult,
+  PlanningRunResult,
+  ResearchRunResult,
+} from "../types/api.js";
 import type { VaultStore } from "./firestoreStore.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
+import {
+  createGoogleWorkspaceClient,
+  type GoogleWorkspaceClient,
+} from "./googleWorkspace.js";
 import { slugifyPolish } from "./markdown.js";
+import { runPlanningAgent, type ExtractPlanFn } from "./planningAgent.js";
 import { runResearchAgent, type GenerateResearchReportFn } from "./researchAgent.js";
 import { parseFrontmatter } from "./wikiParser.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
@@ -751,6 +761,9 @@ export async function organizeInboxFile(params: {
   classifyNote?: ClassifyInboxNoteFn;
   generateResearchReport?: GenerateResearchReportFn;
   enableResearchAgent?: boolean;
+  googleClient?: GoogleWorkspaceClient;
+  extractPlan?: ExtractPlanFn;
+  enablePlanningAgent?: boolean;
   vaultPrefix?: string;
   now?: () => Date;
   force?: boolean;
@@ -947,6 +960,52 @@ export async function organizeInboxFile(params: {
       }
     }
 
+    let planningResult: PlanningRunResult | undefined;
+    if (
+      (decision.intent === "plan-calendar" || decision.intent === "todo") &&
+      params.enablePlanningAgent !== false
+    ) {
+      const gClient = params.googleClient ?? createGoogleWorkspaceClient();
+      if (gClient.isConfigured()) {
+        try {
+          planningResult = await runPlanningAgent({
+            topicTitle: decision.title,
+            noteMarkdown: rawMarkdown,
+            sourcePath: processedRepoPath,
+            targetRepoPath,
+            googleClient: gClient,
+            vaultClient: params.vaultClient,
+            extractPlan: params.extractPlan,
+            now: getNow,
+          });
+        } catch (planErr) {
+          const planMessage =
+            planErr instanceof Error ? planErr.message : String(planErr);
+          console.error("[inboxOrganizer] Planning agent error:", planMessage);
+          planningResult = {
+            status: "error",
+            calendarEventsCreated: [],
+            tasksCreated: [],
+            listItemsCreated: [],
+            reason: planMessage,
+          };
+        }
+      }
+    }
+
+    const googleEventIds =
+      planningResult?.calendarEventsCreated.map((ev) => ev.id) ?? [];
+    const googleTaskIds = [
+      ...(planningResult?.tasksCreated.map((t) => t.id) ?? []),
+      ...(planningResult?.listItemsCreated.map((li) => li.id) ?? []),
+    ];
+    const googleListsUsed = Array.from(
+      new Set([
+        ...(planningResult?.tasksCreated.map((t) => t.listName) ?? []),
+        ...(planningResult?.listItemsCreated.map((li) => li.listName) ?? []),
+      ]),
+    );
+
     await params.store.completeInboxJob({
       id: "",
       inboxPath: params.inboxRepoPath,
@@ -961,6 +1020,10 @@ export async function organizeInboxFile(params: {
         : {}),
       ...(researchResult?.branch ? { researchBranch: researchResult.branch } : {}),
       ...(researchResult?.reportPath ? { researchReportPath: researchResult.reportPath } : {}),
+      ...(planningResult ? { planningStatus: planningResult.status } : {}),
+      ...(googleEventIds.length > 0 ? { googleEventIds } : {}),
+      ...(googleTaskIds.length > 0 ? { googleTaskIds } : {}),
+      ...(googleListsUsed.length > 0 ? { googleListsUsed } : {}),
       createdAt,
       updatedAt: nowIso,
     });
@@ -973,6 +1036,7 @@ export async function organizeInboxFile(params: {
       processedPath: processedRepoPath,
       commitSha: commitRes.commitSha,
       ...(researchResult ? { research: researchResult } : {}),
+      ...(planningResult ? { planning: planningResult } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -998,6 +1062,9 @@ export async function organizePendingInboxFiles(params: {
   classifyNote?: ClassifyInboxNoteFn;
   generateResearchReport?: GenerateResearchReportFn;
   enableResearchAgent?: boolean;
+  googleClient?: GoogleWorkspaceClient;
+  extractPlan?: ExtractPlanFn;
+  enablePlanningAgent?: boolean;
   vaultPrefix?: string;
   paths?: string[];
   limit?: number;
@@ -1044,6 +1111,9 @@ export async function organizePendingInboxFiles(params: {
       classifyNote: params.classifyNote,
       generateResearchReport: params.generateResearchReport,
       enableResearchAgent: params.enableResearchAgent,
+      googleClient: params.googleClient,
+      extractPlan: params.extractPlan,
+      enablePlanningAgent: params.enablePlanningAgent,
       vaultPrefix: params.vaultPrefix,
       now: params.now,
       force: params.force,

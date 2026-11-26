@@ -61,9 +61,12 @@ private:
   bool readReg(uint8_t reg, uint8_t& val);
   bool configureEs8311Registers();
   bool initI2sRx();
+  bool wakeCodec();
+  void powerDownCodec();
   void writeWavHeader(uint32_t pcmBytes);
 
   bool ready_ = false;
+  bool codecPowered_ = false;
   volatile bool recordingActive_ = false;
   volatile bool taskRunning_ = false;
   volatile bool reachedLimit_ = false;

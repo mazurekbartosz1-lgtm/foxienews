@@ -1,7 +1,7 @@
 ---
 title: Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)
 slug: projekty/foxie-notes/zadania/etap-2-agenci-chmurowi
-updated_at: 2026-11-26T18:40:00Z
+updated_at: 2026-11-26T18:55:00Z
 tags: [zadania, agenci, chmura, obsidian, foxie-notes]
 ---
 
@@ -57,10 +57,10 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Dodać automatyczne tworzenie gałęzi `agent/research-<slug>` (z obsługą kolizji `422` i deduplikacją otwartych PR przez `findOpenPullRequest`) i otwieranie Pull Requesta w `mazurekbartosz1-lgtm/obsydianandwiki` po klasyfikacji `research-idea` #agenci #github
 - [x] Dodać testy scenariusza `research-idea -> PR` (`16/16` w `npm --prefix functions test`) i zweryfikować na żywo (`POST /api/api/capture` -> webhook -> Organizator -> `obsydianandwiki/pull/1`) #agenci #testy
 
-### Faza 3 — Agent Planowania (Google Calendar + Google Tasks)
-- [ ] Skonfigurować OAuth2 (Calendar + Tasks scopes) i zapisać refresh token w Firebase Secret Manager (`functions/.secret.local` lokalnie) #agenci #sekrety
-- [ ] Zaimplementować `planningAgent` tworzący zadania w Google Tasks i/lub wydarzenia w Google Calendar z idempotencją po `inbox_jobs` #agenci #google
-- [ ] Przetestować pełny obieg głosówki: `Waveshare V2 -> raw/inbox/ -> Organizator -> Tasks/Calendar lub Researcher PR` #agenci #e2e
+### Faza 3 — Agent Planowania (Google Calendar + Google Tasks + Google Listy)
+- [x] Przygotować klienta REST Google Workspace (`googleWorkspace.ts`), skrypt autoryzacji OAuth2 (`scripts/google-oauth-setup.mjs`) dla scope'ów Calendar + Tasks oraz obsługę `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` #agenci #sekrety
+- [x] Zaimplementować `planningAgent.ts` (ekstrakcja wydarzeń Calendar z progiem pewności `>= 0.75`, zadań Google Tasks z `@due`, oraz tematycznych **Google List** np. `"Lista zakupów"`, z dopisaniem sekcji `## Synchronizacja Google` w `wiki/`, zapisem ID w `inbox_jobs` i endpointem `POST /api/agents/plan`) + testy `18/18` (`planningAgent.test.ts`) #agenci #google
+- [ ] Wykonać jednorazową autoryzację OAuth2 (`node scripts/google-oauth-setup.mjs`), wgrać 3 sekrety Google do Firebase Secret Manager, dopisać je w `functions/src/index.ts` i przetestować żywy obieg `Waveshare V2 -> raw/inbox/ -> Organizator -> Google Calendar/Tasks/Listy` #agenci #e2e
 
 ---
 

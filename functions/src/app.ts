@@ -18,11 +18,19 @@ import {
   type VaultStore,
 } from "./services/firestoreStore.js";
 import {
+  createGoogleWorkspaceClient,
+  type GoogleWorkspaceClient,
+} from "./services/googleWorkspace.js";
+import {
   organizeInboxFile,
   organizePendingInboxFiles,
   type ClassifyInboxNoteFn,
 } from "./services/inboxOrganizer.js";
 import { buildCaptureMarkdown, buildInboxPath } from "./services/markdown.js";
+import {
+  runPlanningAgent,
+  type ExtractPlanFn,
+} from "./services/planningAgent.js";
 import {
   runResearchAgent,
   type GenerateResearchReportFn,
@@ -68,6 +76,9 @@ export interface AppDeps {
   enableInboxOrganizer?: boolean;
   generateResearchReport?: GenerateResearchReportFn;
   enableResearchAgent?: boolean;
+  googleClient?: GoogleWorkspaceClient;
+  extractPlan?: ExtractPlanFn;
+  enablePlanningAgent?: boolean;
   now?: () => Date;
 }
 
@@ -351,6 +362,9 @@ export function createApp(deps: AppDeps = {}): express.Express {
               classifyNote: deps.classifyInboxNote,
               generateResearchReport: deps.generateResearchReport,
               enableResearchAgent: deps.enableResearchAgent,
+              googleClient: deps.googleClient,
+              extractPlan: deps.extractPlan,
+              enablePlanningAgent: deps.enablePlanningAgent,
               vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
               now: getNow,
             });
@@ -405,6 +419,9 @@ export function createApp(deps: AppDeps = {}): express.Express {
         classifyNote: deps.classifyInboxNote,
         generateResearchReport: deps.generateResearchReport,
         enableResearchAgent: deps.enableResearchAgent,
+        googleClient: deps.googleClient,
+        extractPlan: deps.extractPlan,
+        enablePlanningAgent: deps.enablePlanningAgent,
         vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
         paths,
         limit,
@@ -502,6 +519,91 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message =
         err instanceof Error ? err.message : "Failed to run research agent";
       console.error("[/api/agents/research] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Faza 3: On-demand Planning agent (Google Calendar + Google Tasks + Google Lists)
+  app.post("/api/agents/plan", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as {
+      title?: unknown;
+      text?: unknown;
+      wikiPath?: unknown;
+    };
+
+    const wikiPath = typeof body.wikiPath === "string" ? body.wikiPath.trim() : "";
+    const rawText = typeof body.text === "string" ? body.text.trim() : "";
+    const titleHint = typeof body.title === "string" ? body.title.trim() : "";
+
+    try {
+      const googleClient = deps.googleClient ?? createGoogleWorkspaceClient();
+      const client =
+        deps.vaultClient ??
+        (process.env.GITHUB_TOKEN?.trim() &&
+        process.env.GITHUB_OWNER?.trim() &&
+        process.env.GITHUB_REPO?.trim()
+          ? createGitHubVaultClient()
+          : undefined);
+
+      let noteMarkdown = rawText;
+      let topicTitle = titleHint;
+      let targetRepoPath: string | undefined;
+
+      if (wikiPath) {
+        if (!client) {
+          res.status(500).json({ error: "Missing GitHub vault configuration" });
+          return;
+        }
+        const fetched = await client.fetchFile(wikiPath);
+        if (fetched === null) {
+          res.status(404).json({ error: `Wiki file not found: ${wikiPath}` });
+          return;
+        }
+        noteMarkdown = fetched;
+        targetRepoPath = wikiPath;
+        const { frontmatter, body: parsedBody } = parseFrontmatter(fetched);
+        const h1Match = parsedBody.match(/^\s*#\s+(.+)$/m);
+        topicTitle =
+          topicTitle || frontmatter.title || (h1Match ? h1Match[1].trim() : "") || wikiPath;
+      } else {
+        if (!noteMarkdown) {
+          res.status(400).json({ error: "Provide either non-empty 'text' or 'wikiPath'" });
+          return;
+        }
+        if (!topicTitle) {
+          const firstLine = noteMarkdown
+            .split("\n")
+            .map((l) => l.replace(/^#+\s*/, "").trim())
+            .find(Boolean);
+          topicTitle = (firstLine ?? "Planowanie").slice(0, 80);
+        }
+      }
+
+      const result = await runPlanningAgent({
+        topicTitle,
+        noteMarkdown,
+        sourcePath: targetRepoPath,
+        targetRepoPath,
+        googleClient,
+        vaultClient: client,
+        extractPlan: deps.extractPlan,
+        now: getNow,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run planning agent";
+      console.error("[/api/agents/plan] Error:", message);
       const status = message.startsWith("Missing ") ? 500 : 502;
       res.status(status).json({ error: message });
     }

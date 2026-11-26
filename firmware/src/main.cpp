@@ -88,9 +88,9 @@ constexpr uint32_t SAVED_AUTO_RETURN_MS = 3500;
 constexpr uint32_t ERROR_AUTO_RETURN_MS = 10000;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
-constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
+constexpr uint32_t INACTIVITY_SLEEP_MS = 3UL * 60UL * 1000UL;        // 3 minutes
 constexpr uint32_t QUEUE_SYNC_RETRY_MS = 60000;
-constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 20000;
+constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 60000;
 constexpr uint32_t WIFI_OFFLINE_UI_DEBOUNCE_MS = 12000;
 constexpr uint32_t WIFI_COMEBACK_RETRY_DELAY_MS = 2500;
 constexpr uint8_t EPD_FULL_REFRESH_EVERY = 30;
@@ -267,12 +267,35 @@ static void setDisplayPower(bool on) {
   }
 }
 
+static uint32_t readBatteryMilliVolts() {
+  uint32_t sumMv = 0;
+  for (uint8_t i = 0; i < 8; i++) {
+    sumMv += analogReadMilliVolts(PIN_BAT_ADC);
+  }
+  return (sumMv / 8) * 2;
+}
+
 static uint8_t readBatteryPercent() {
-  uint32_t mv = analogReadMilliVolts(PIN_BAT_ADC);
-  uint32_t batMv = mv * 2;
+  uint32_t batMv = readBatteryMilliVolts();
   if (batMv <= 3300) return 0;
   if (batMv >= 4200) return 100;
   return static_cast<uint8_t>(((batMv - 3300) * 100) / (4200 - 3300));
+}
+
+static void enterIdlePowerProfile() {
+  if (!portalActive) {
+    setCpuFrequencyMhz(80);
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFi.setSleep(WIFI_PS_MAX_MODEM);
+    }
+  }
+}
+
+static void enterActiveTransferProfile() {
+  setCpuFrequencyMhz(240);
+  if (WiFi.getMode() != WIFI_OFF) {
+    WiFi.setSleep(WIFI_PS_NONE);
+  }
 }
 
 static void loadConfigFromNvs() {
@@ -417,6 +440,7 @@ static void resolveCustomCityIfNeeded() {
 
   if (WiFi.status() != WL_CONNECTED) return;
 
+  enterActiveTransferProfile();
   String geoUrl = F("https://geocoding-api.open-meteo.com/v1/search?name=");
   geoUrl += urlEncode(cfg.weatherCity);
   geoUrl += F("&count=1&language=pl");
@@ -448,6 +472,7 @@ static void resolveCustomCityIfNeeded() {
 static bool fetchWeatherOpenMeteo() {
   if (WiFi.status() != WL_CONNECTED) return false;
 
+  enterActiveTransferProfile();
   char url[200];
   snprintf(
     url,
@@ -511,10 +536,11 @@ static void handleWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 }
 
 static void configureStableWifiSta(bool autoReconnect = true) {
+  enterActiveTransferProfile();
   WiFi.persistent(false);
   WiFi.setAutoReconnect(autoReconnect);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFi.setSleep(WIFI_PS_NONE);
   WiFi.setTxPower(WIFI_POWER_15dBm);
 }
 
@@ -578,6 +604,8 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   Serial.printf("[Foxie] Wi-Fi connection timeout (status=%d, reason=%u)\n",
                 static_cast<int>(WiFi.status()),
                 static_cast<unsigned>(lastWifiDisconnectReason));
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
   return false;
 }
 
@@ -657,6 +685,7 @@ static void handlePortalRedirect() {
 static void startCaptivePortal() {
   if (portalActive) return;
 
+  enterActiveTransferProfile();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
   bool apOk = WiFi.softAP(FOXIE_AP_SSID);
@@ -933,6 +962,10 @@ static void renderCurrentScreen(bool partial = false) {
 
     display.drawRect(0, 0, EPD_WIDTH, EPD_HEIGHT, GxEPD_BLACK);
   } while (display.nextPage());
+
+  if (!isSleeping && currentState != DeviceState::Recording) {
+    display.powerOff();
+  }
 }
 
 static void renderBottomInfoPartial() {
@@ -943,6 +976,7 @@ static void renderBottomInfoPartial() {
     display.fillRect(8, 168, 184, 30, GxEPD_WHITE);
     drawBottomInfoRow(true);
   } while (display.nextPage());
+  display.powerOff();
 }
 
 static void renderStatusBarPartial(bool wifiConnected) {
@@ -960,6 +994,7 @@ static void renderStatusBarPartial(bool wifiConnected) {
     display.drawFastVLine(0, 0, UI_STATUS_BAR_H + 1, GxEPD_BLACK);
     display.drawFastVLine(EPD_WIDTH - 1, 0, UI_STATUS_BAR_H + 1, GxEPD_BLACK);
   } while (display.nextPage());
+  display.powerOff();
 }
 
 static void renderRecordingTimerPartial() {
@@ -1040,6 +1075,8 @@ static void enterState(DeviceState next, bool partial = false) {
   renderCurrentScreen(partial);
   if (next == DeviceState::Recording) {
     lastRecDrawMs = millis();
+  } else if (next == DeviceState::Ready) {
+    enterIdlePowerProfile();
   }
 }
 
@@ -1052,8 +1089,23 @@ static void configureRtcWakePin(int gpioNum) {
 }
 
 static void armHibernationSleepAndStart() {
-  // Keep PWR_HOLD latched HIGH during deep sleep so LiPo can wake on button/touch/RTC
+  // Latch safe OFF levels on all active-LOW/power control pins during deep sleep
+  pinMode(PIN_PWR_HOLD, OUTPUT);
+  digitalWrite(PIN_PWR_HOLD, HIGH);
+  pinMode(PIN_EPD_PWR, OUTPUT);
+  digitalWrite(PIN_EPD_PWR, EPD_PWR_OFF_LEVEL);
+  pinMode(PIN_AUDIO_PWR, OUTPUT);
+  digitalWrite(PIN_AUDIO_PWR, AUDIO_PWR_OFF_LEVEL);
+  pinMode(PIN_AUDIO_PA_CTRL, OUTPUT);
+  digitalWrite(PIN_AUDIO_PA_CTRL, LOW);
+  pinMode(PIN_LED_STATUS, OUTPUT);
+  digitalWrite(PIN_LED_STATUS, LED_OFF_LEVEL);
+
   gpio_hold_en(static_cast<gpio_num_t>(PIN_PWR_HOLD));
+  gpio_hold_en(static_cast<gpio_num_t>(PIN_EPD_PWR));
+  gpio_hold_en(static_cast<gpio_num_t>(PIN_AUDIO_PWR));
+  gpio_hold_en(static_cast<gpio_num_t>(PIN_AUDIO_PA_CTRL));
+  gpio_hold_en(static_cast<gpio_num_t>(PIN_LED_STATUS));
   gpio_deep_sleep_hold_en();
 
   uint64_t wakeMask = (1ULL << PIN_BTN_BOOT) | (1ULL << PIN_BTN_PWR);
@@ -1155,6 +1207,7 @@ static void syncOfflineQueueNow() {
   if (!sdQueue.isMounted() || sdQueue.pendingCount() == 0) return;
   if (WiFi.status() != WL_CONNECTED || !isApiConfigured()) return;
 
+  enterActiveTransferProfile();
   markUserActivity();
   lastQueueSyncAttemptMs = millis();
   savedToSdFlag = false;
@@ -1168,6 +1221,7 @@ static void syncOfflineQueueNow() {
     size_t wavSize = 0;
     if (!sdQueue.readFileToPsram(filePath, wavBuf, wavSize)) {
       Serial.printf("[SD] Skipping unreadable queued file: %s\n", filePath.c_str());
+      sdQueue.suspend();
       enterState(DeviceState::Ready);
       return;
     }
@@ -1199,11 +1253,13 @@ static void syncOfflineQueueNow() {
         "%s",
         res.shortError[0] ? res.shortError : "BLAD SYNC"
       );
+      sdQueue.suspend();
       enterState(DeviceState::Error);
       return;
     }
   }
 
+  sdQueue.suspend();
   if (syncedCount > 0) {
     Serial.printf("[SD] Offline queue synced (%u file(s))\n", static_cast<unsigned>(syncedCount));
     savedToSdFlag = false;
@@ -1313,9 +1369,13 @@ static void processButton(
 }
 
 void setup() {
-  // Release deep-sleep hold on PWR_HOLD and keep battery power latched HIGH
+  // Release deep-sleep hold on power/peripheral pins and keep battery power latched HIGH
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis(static_cast<gpio_num_t>(PIN_PWR_HOLD));
+  gpio_hold_dis(static_cast<gpio_num_t>(PIN_EPD_PWR));
+  gpio_hold_dis(static_cast<gpio_num_t>(PIN_AUDIO_PWR));
+  gpio_hold_dis(static_cast<gpio_num_t>(PIN_AUDIO_PA_CTRL));
+  gpio_hold_dis(static_cast<gpio_num_t>(PIN_LED_STATUS));
   pinMode(PIN_PWR_HOLD, OUTPUT);
   digitalWrite(PIN_PWR_HOLD, HIGH);
 
@@ -1335,8 +1395,9 @@ void setup() {
   esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   applyPolandTimezone();
 
-  // Ultra-fast silent RTC clock tick during hibernation (Wi-Fi stays OFF)
+  // Ultra-fast silent RTC clock tick during hibernation (Wi-Fi stays OFF, 80 MHz)
   if (wakeCause == ESP_SLEEP_WAKEUP_TIMER && rtcInHibernation) {
+    setCpuFrequencyMhz(80);
     char tmp[8];
     int curMinute = -1;
     if (getTime24h(tmp, sizeof(tmp), &curMinute) && curMinute != rtcHibLastMinute) {
@@ -1480,9 +1541,14 @@ void loop() {
       }
       markUserActivity();
     } else if (ch == 's') {
-      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) sdMounted=%d sdPending=%u psramFree=%lu stackFree=%lu lastWifiErr=%u apiUrlSet=%d apiKeySet=%d\n",
+      uint32_t batMv = readBatteryMilliVolts();
+      uint8_t batPct = readBatteryPercent();
+      Serial.printf("[Diag] state=%d wifi=%d cpuMhz=%lu batMv=%lu batPct=%u audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) sdMounted=%d sdPending=%u psramFree=%lu stackFree=%lu lastWifiErr=%u apiUrlSet=%d apiKeySet=%d\n",
                     static_cast<int>(currentState),
                     static_cast<int>(WiFi.status()),
+                    static_cast<unsigned long>(getCpuFrequencyMhz()),
+                    static_cast<unsigned long>(batMv),
+                    static_cast<unsigned>(batPct),
                     audioRecorder.isReady() ? 1 : 0,
                     audioRecorder.chipId(),
                     audioRecorder.chipRev(),
@@ -1557,6 +1623,7 @@ void loop() {
   } else if (!isSleeping && currentState == DeviceState::Uploading) {
     if (uploadPending) {
       uploadPending = false;
+      enterActiveTransferProfile();
       display.powerOff();
       CaptureUploadResult res = uploadWavCapture(
         cfg.apiUrl,
@@ -1601,7 +1668,7 @@ void loop() {
     }
   } else if (!isSleeping && currentState == DeviceState::Ready) {
     if ((now - lastActivityMs) >= INACTIVITY_SLEEP_MS) {
-      enterDeepSleepHibernation("2h bezczynnosci");
+      enterDeepSleepHibernation("3 min bezczynnosci");
       return;
     }
 
@@ -1626,6 +1693,7 @@ void loop() {
           renderBottomInfoPartial();
           readyPartialCount++;
         }
+        enterIdlePowerProfile();
         return;
       }
     } else {
@@ -1646,10 +1714,20 @@ void loop() {
         lastWifiReconnectAttemptMs = now;
         wifiRetryRequested = false;
         Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
-        configureStableWifiSta(true);
-        WiFi.disconnect(false);
-        delay(100);
-        WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+        if (!connectToWifi(8000)) {
+          enterIdlePowerProfile();
+        } else {
+          prevWifiConnected = true;
+          lastQueueSyncAttemptMs = 0;
+          if (!uiWifiConnected) {
+            uiWifiConnected = true;
+            renderStatusBarPartial(true);
+            readyPartialCount++;
+          }
+          renderBottomInfoPartial();
+          readyPartialCount++;
+          enterIdlePowerProfile();
+        }
         return;
       }
     }
@@ -1671,6 +1749,7 @@ void loop() {
       } else {
         lastWeatherFetchMs = millis();
       }
+      enterIdlePowerProfile();
     }
 
     now = millis();
