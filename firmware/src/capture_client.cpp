@@ -5,6 +5,8 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <mbedtls/base64.h>
+#include <memory>
+#include <new>
 #include <stdio.h>
 #include <string.h>
 
@@ -193,18 +195,30 @@ CaptureUploadResult uploadWavCapture(
                 ep.port,
                 ep.path.c_str());
 
-  WiFiClientSecure tlsClient;
-  WiFiClient plainClient;
+  std::unique_ptr<WiFiClientSecure> tlsClient;
+  std::unique_ptr<WiFiClient> plainClient;
   Client* client = nullptr;
 
   if (ep.useTls) {
-    tlsClient.setInsecure();
-    tlsClient.setTimeout(HTTP_RESPONSE_TIMEOUT_MS / 1000);
-    tlsClient.setHandshakeTimeout(15);
-    client = &tlsClient;
+    tlsClient.reset(new (std::nothrow) WiFiClientSecure());
+    if (!tlsClient) {
+      res.errorMessage = "Out of memory (tlsClient)";
+      setShortError(res, "BRAK RAM");
+      return res;
+    }
+    tlsClient->setInsecure();
+    tlsClient->setTimeout(HTTP_RESPONSE_TIMEOUT_MS / 1000);
+    tlsClient->setHandshakeTimeout(15);
+    client = tlsClient.get();
   } else {
-    plainClient.setTimeout(HTTP_RESPONSE_TIMEOUT_MS / 1000);
-    client = &plainClient;
+    plainClient.reset(new (std::nothrow) WiFiClient());
+    if (!plainClient) {
+      res.errorMessage = "Out of memory (plainClient)";
+      setShortError(res, "BRAK RAM");
+      return res;
+    }
+    plainClient->setTimeout(HTTP_RESPONSE_TIMEOUT_MS / 1000);
+    client = plainClient.get();
   }
 
   if (!client->connect(ep.host.c_str(), ep.port)) {
@@ -250,7 +264,14 @@ CaptureUploadResult uploadWavCapture(
     return res;
   }
 
-  uint8_t b64Out[4096 + 4];
+  constexpr size_t B64_BUF_SIZE = 4096 + 4;
+  std::unique_ptr<uint8_t[]> b64Out(new (std::nothrow) uint8_t[B64_BUF_SIZE]);
+  if (!b64Out) {
+    client->stop();
+    res.errorMessage = "Out of memory (b64Out)";
+    setShortError(res, "BRAK RAM");
+    return res;
+  }
   size_t offset = 0;
   uint8_t lastPct = 30;
 
@@ -262,8 +283,8 @@ CaptureUploadResult uploadWavCapture(
 
     size_t outLen = 0;
     int rc = mbedtls_base64_encode(
-      b64Out,
-      sizeof(b64Out),
+      b64Out.get(),
+      B64_BUF_SIZE,
       &outLen,
       wavData + offset,
       chunk
@@ -275,7 +296,7 @@ CaptureUploadResult uploadWavCapture(
       return res;
     }
 
-    if (!writeAll(*client, b64Out, outLen, SOCKET_WRITE_TIMEOUT_MS)) {
+    if (!writeAll(*client, b64Out.get(), outLen, SOCKET_WRITE_TIMEOUT_MS)) {
       client->stop();
       res.errorMessage = "Socket write failed (body)";
       setShortError(res, "BLAD WYSYLKI");

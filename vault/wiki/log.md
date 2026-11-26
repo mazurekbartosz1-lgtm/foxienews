@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T13:41:00Z
+updated_at: 2026-11-26T13:55:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Naprawa crasha stosu przy wysyłce HTTPS, `reason=208` Wi-Fi i migania ekranu (`firmware/`):**
+  - Zdiagnozowano na `COM5` główną przyczynę rozłączania podczas wysyłania i znikania pogody: `Stack canary watchpoint triggered (loopTask)` w [`capture_client.cpp`](../../../firmware/src/capture_client.cpp) (bufor `b64Out[4100]` + `WiFiClientSecure` + `WiFiClient` na domyślnym stosie `8192 B` przepełniały stos podczas TLS handshake, powodując cichy reset płytki i `reason=208` przy ponownym łączeniu).
+  - Powiększono stos `loopTask` do `16384 B` w [`platformio.ini`](../../../firmware/platformio.ini), przeniesiono `b64Out` oraz klientów TCP/TLS na stertę (`std::unique_ptr`), dodano w [`main.cpp`](../../../firmware/src/main.cpp) obsługę comeback delay (`2.5 s`) przy `reason=208`, zapis pogody w NVS (`w_valid`/`w_temp`/`w_code`), naprawiono underflow `now - lastWeatherFetchMs` oraz zastąpiono pełne odświeżanie przy zmianie Wi-Fi częściowym odświeżaniem samego paska stanu (`renderStatusBarPartial`) z `12 s` debounce. Zweryfikowano na `COM5` (`wifi=3`, `stackFree=12032 B`, upload HTTPS `HTTP 201` do `obsydianandwiki/raw/inbox/` bez resetu ani migania).
 - **Stabilizacja Wi-Fi podczas uploadu HTTPS (`firmware/`):**
   - W [`main.cpp`](../../../firmware/src/main.cpp) i [`capture_client.cpp`](../../../firmware/src/capture_client.cpp) ustawiono `WIFI_POWER_13dBm`, `WiFi.setSleep(false)`, czysty reset przed `WiFi.begin()`, `display.powerOff()` przed transferem TLS (brak równoległego odświeżania HV e-Paper podczas wysyłki), pacing chunków (`delay(2)`) oraz logowanie `ARDUINO_EVENT_WIFI_STA_DISCONNECTED` (`reason=%d`). Wgrano na `COM5` i potwierdzono stabilne połączenie (`192.168.138.14`, NTP `14:40`).
 - **Przełączenie chmury Firebase na prywatne repo Obsidiana (`mazurekbartosz1-lgtm/obsydianandwiki`):**

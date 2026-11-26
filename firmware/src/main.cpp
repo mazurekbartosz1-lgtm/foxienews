@@ -14,6 +14,7 @@
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "audio_recorder.h"
 #include "board_pins.h"
@@ -89,7 +90,9 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;        // 30 minutes
 constexpr uint32_t INACTIVITY_SLEEP_MS = 2UL * 60UL * 60UL * 1000UL; // 2 hours
 constexpr uint32_t QUEUE_SYNC_RETRY_MS = 60000;
-constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 60000;
+constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 20000;
+constexpr uint32_t WIFI_OFFLINE_UI_DEBOUNCE_MS = 12000;
+constexpr uint32_t WIFI_COMEBACK_RETRY_DELAY_MS = 2500;
 constexpr uint8_t EPD_FULL_REFRESH_EVERY = 30;
 constexpr uint8_t DNS_PORT = 53;
 
@@ -138,6 +141,10 @@ static SdQueue sdQueue;
 static bool uploadPending = false;
 static bool savedToSdFlag = false;
 static bool prevWifiConnected = false;
+static volatile uint8_t lastWifiDisconnectReason = 0;
+static volatile bool wifiRetryRequested = false;
+static bool uiWifiConnected = false;
+static uint32_t wifiLostAtMs = 0;
 static uint32_t lastQueueSyncAttemptMs = 0;
 static uint32_t lastWifiReconnectAttemptMs = 0;
 static char lastErrorText[24] = "";
@@ -277,6 +284,11 @@ static void loadConfigFromNvs() {
   cfg.weatherCity = prefs.getString("w_city", DEFAULT_WEATHER_CITY);
   rtcLat = prefs.getDouble("w_lat", DEFAULT_WEATHER_LAT);
   rtcLon = prefs.getDouble("w_lon", DEFAULT_WEATHER_LON);
+  if (!rtcWeatherValid && prefs.getBool("w_valid", false)) {
+    rtcWeatherTempC = prefs.getShort("w_temp", 0);
+    rtcWeatherCode = prefs.getShort("w_code", 1);
+    rtcWeatherValid = true;
+  }
   prefs.end();
 
   if (cfg.wifiSsid.isEmpty() && strlen(FOXIE_DEFAULT_WIFI_SSID) > 0) {
@@ -467,6 +479,11 @@ static bool fetchWeatherOpenMeteo() {
       rtcWeatherCode = static_cast<int16_t>(doc["current"]["weather_code"] | 1);
       rtcWeatherValid = true;
       lastWeatherFetchMs = millis();
+      prefs.begin("foxie", false);
+      prefs.putBool("w_valid", true);
+      prefs.putShort("w_temp", rtcWeatherTempC);
+      prefs.putShort("w_code", rtcWeatherCode);
+      prefs.end();
       ok = true;
       Serial.printf("[Foxie] Weather (%s): %d C (WMO %d)\n",
                     cfg.weatherCity.c_str(),
@@ -484,17 +501,21 @@ static bool fetchWeatherOpenMeteo() {
 
 static void handleWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-    Serial.printf("[WiFi] Disconnected (reason=%d)\n",
-                  static_cast<int>(info.wifi_sta_disconnected.reason));
+    uint8_t reason = info.wifi_sta_disconnected.reason;
+    lastWifiDisconnectReason = reason;
+    if (reason == 208 || reason == 202 || reason == 205 || reason == 15) {
+      wifiRetryRequested = true;
+    }
+    Serial.printf("[WiFi] Disconnected (reason=%u)\n", static_cast<unsigned>(reason));
   }
 }
 
-static void configureStableWifiSta() {
+static void configureStableWifiSta(bool autoReconnect = true) {
   WiFi.persistent(false);
+  WiFi.setAutoReconnect(autoReconnect);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.setTxPower(WIFI_POWER_13dBm);
-  WiFi.setAutoReconnect(true);
+  WiFi.setTxPower(WIFI_POWER_15dBm);
 }
 
 static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
@@ -509,15 +530,40 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   Serial.printf("[Foxie] Connecting to Wi-Fi '%s'...\n", cfg.wifiSsid.c_str());
   currentLedPattern = LedPattern::WifiPulse;
 
-  configureStableWifiSta();
-  WiFi.disconnect(false);
-  delay(120);
+  configureStableWifiSta(false);
+  WiFi.disconnect(false, true);
+  delay(150);
+  wifiRetryRequested = false;
+  lastWifiDisconnectReason = 0;
   WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
 
   uint32_t startMs = millis();
+  uint8_t retryCount = 0;
   while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < timeoutMs) {
-    delay(250);
+    if (wifiRetryRequested && retryCount < 3) {
+      wifiRetryRequested = false;
+      retryCount++;
+      Serial.printf("[Foxie] Wi-Fi assoc refused (reason=%u), waiting %lums before retry %u/3...\n",
+                    static_cast<unsigned>(lastWifiDisconnectReason),
+                    static_cast<unsigned long>(WIFI_COMEBACK_RETRY_DELAY_MS),
+                    static_cast<unsigned>(retryCount));
+      uint32_t waitStart = millis();
+      while (WiFi.status() != WL_CONNECTED &&
+             (millis() - startMs) < timeoutMs &&
+             (millis() - waitStart) < WIFI_COMEBACK_RETRY_DELAY_MS) {
+        delay(100);
+      }
+      if (WiFi.status() != WL_CONNECTED && (millis() - startMs) < timeoutMs) {
+        WiFi.disconnect(false);
+        delay(100);
+        WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+      }
+    } else {
+      delay(150);
+    }
   }
+
+  WiFi.setAutoReconnect(true);
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[Foxie] Wi-Fi connected! IP: %s, RSSI: %d dBm\n",
@@ -529,8 +575,9 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
     return true;
   }
 
-  Serial.printf("[Foxie] Wi-Fi connection timeout (status=%d)\n",
-                static_cast<int>(WiFi.status()));
+  Serial.printf("[Foxie] Wi-Fi connection timeout (status=%d, reason=%u)\n",
+                static_cast<int>(WiFi.status()),
+                static_cast<unsigned>(lastWifiDisconnectReason));
   return false;
 }
 
@@ -775,9 +822,27 @@ static void drawHibernationFrame(int minuteOfDay, uint8_t batPct) {
   display.drawRect(0, 0, EPD_WIDTH, EPD_HEIGHT, GxEPD_BLACK);
 }
 
+static void buildReadyStatusLabel(char* out, size_t len, bool wifiConnected) {
+  uint16_t pending = sdQueue.pendingCount();
+  if (pending > 0) {
+    snprintf(
+      out,
+      len,
+      "%s SD:%u",
+      wifiConnected ? "POLACZONY" : "OFFLINE",
+      static_cast<unsigned>(pending)
+    );
+  } else {
+    snprintf(out, len, "%s", wifiConnected ? "POLACZONY" : "BRAK WI-FI");
+  }
+}
+
 static void renderCurrentScreen(bool partial = false) {
   batteryPercent = readBatteryPercent();
   bool wifiConnected = (!isSleeping && WiFi.status() == WL_CONNECTED);
+  if (!isSleeping && currentState == DeviceState::Ready) {
+    uiWifiConnected = wifiConnected;
+  }
 
   setDisplayPower(true);
   if (partial) {
@@ -806,18 +871,7 @@ static void renderCurrentScreen(bool partial = false) {
       switch (currentState) {
         case DeviceState::Ready: {
           char statusLabel[24];
-          uint16_t pending = sdQueue.pendingCount();
-          if (pending > 0) {
-            snprintf(
-              statusLabel,
-              sizeof(statusLabel),
-              "%s SD:%u",
-              wifiConnected ? "POLACZONY" : "OFFLINE",
-              static_cast<unsigned>(pending)
-            );
-          } else {
-            snprintf(statusLabel, sizeof(statusLabel), "%s", wifiConnected ? "POLACZONY" : "BRAK WI-FI");
-          }
+          buildReadyStatusLabel(statusLabel, sizeof(statusLabel), wifiConnected);
           drawStatusBar(statusLabel, wifiConnected);
           display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_READY, FOX_SPRITE_READY_W, FOX_SPRITE_READY_H, GxEPD_BLACK);
           drawBottomInfoRow(true);
@@ -888,6 +942,23 @@ static void renderBottomInfoPartial() {
   do {
     display.fillRect(8, 168, 184, 30, GxEPD_WHITE);
     drawBottomInfoRow(true);
+  } while (display.nextPage());
+}
+
+static void renderStatusBarPartial(bool wifiConnected) {
+  batteryPercent = readBatteryPercent();
+  char statusLabel[24];
+  buildReadyStatusLabel(statusLabel, sizeof(statusLabel), wifiConnected);
+
+  setDisplayPower(true);
+  display.setPartialWindow(0, 0, EPD_WIDTH, UI_STATUS_BAR_H + 1);
+  display.firstPage();
+  do {
+    display.fillRect(0, 0, EPD_WIDTH, UI_STATUS_BAR_H + 1, GxEPD_WHITE);
+    drawStatusBar(statusLabel, wifiConnected);
+    display.drawFastHLine(0, 0, EPD_WIDTH, GxEPD_BLACK);
+    display.drawFastVLine(0, 0, UI_STATUS_BAR_H + 1, GxEPD_BLACK);
+    display.drawFastVLine(EPD_WIDTH - 1, 0, UI_STATUS_BAR_H + 1, GxEPD_BLACK);
   } while (display.nextPage());
 }
 
@@ -1334,7 +1405,9 @@ void setup() {
   delay(200);
   WiFi.onEvent(handleWifiEvent);
   Serial.println();
-  Serial.printf("[Foxie] Booting Waveshare V2 (wakeCause=%d)\n", static_cast<int>(wakeCause));
+  Serial.printf("[Foxie] Booting Waveshare V2 (wakeCause=%d, resetReason=%d)\n",
+                static_cast<int>(wakeCause),
+                static_cast<int>(esp_reset_reason()));
   if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
     Serial.printf("[Foxie] Woke from hibernation! ext1 mask=0x%llx\n",
                   static_cast<unsigned long long>(esp_sleep_get_ext1_wakeup_status()));
@@ -1362,13 +1435,15 @@ void setup() {
   loadConfigFromNvs();
   if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
     prevWifiConnected = true;
+    uiWifiConnected = true;
     enterState(DeviceState::Ready);
   } else if (cfg.wifiSsid.isEmpty()) {
     prevWifiConnected = false;
+    uiWifiConnected = false;
     enterState(DeviceState::WifiSetup);
   } else {
     prevWifiConnected = false;
-    configureStableWifiSta();
+    uiWifiConnected = false;
     lastWifiReconnectAttemptMs = millis();
     Serial.println("[Foxie] Offline mode -> Ready (SD queue available, hold BOOT 2.5s for setup)");
     enterState(DeviceState::Ready);
@@ -1405,7 +1480,7 @@ void loop() {
       }
       markUserActivity();
     } else if (ch == 's') {
-      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) sdMounted=%d sdPending=%u psramFree=%lu apiUrlSet=%d apiKeySet=%d\n",
+      Serial.printf("[Diag] state=%d wifi=%d audioReady=%d es8311=0x%04X rev=0x%02X probe=%uB(peak=%d,rms=%u) sdMounted=%d sdPending=%u psramFree=%lu stackFree=%lu lastWifiErr=%u apiUrlSet=%d apiKeySet=%d\n",
                     static_cast<int>(currentState),
                     static_cast<int>(WiFi.status()),
                     audioRecorder.isReady() ? 1 : 0,
@@ -1417,6 +1492,8 @@ void loop() {
                     sdQueue.isMounted() ? 1 : 0,
                     static_cast<unsigned>(sdQueue.pendingCount()),
                     static_cast<unsigned long>(ESP.getFreePsram()),
+                    static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)),
+                    static_cast<unsigned>(lastWifiDisconnectReason),
                     isApiConfigured() ? 1 : 0,
                     !cfg.apiKey.isEmpty() ? 1 : 0);
     } else if (ch == 'q' && !isSleeping &&
@@ -1529,25 +1606,55 @@ void loop() {
     }
 
     bool wifiNow = (WiFi.status() == WL_CONNECTED);
-    if (wifiNow && !prevWifiConnected) {
-      prevWifiConnected = true;
-      Serial.printf("[Foxie] Wi-Fi reconnected! IP: %s\n", WiFi.localIP().toString().c_str());
-      syncNtpTime(1500);
-      resolveCustomCityIfNeeded();
-      fetchWeatherOpenMeteo();
-      lastQueueSyncAttemptMs = 0;
-      renderCurrentScreen(false);
-    } else if (!wifiNow && prevWifiConnected) {
-      prevWifiConnected = false;
-      Serial.println("[Foxie] Wi-Fi disconnected (offline mode)");
-      renderCurrentScreen(false);
-    } else if (!wifiNow && !cfg.wifiSsid.isEmpty() &&
-               (now - lastWifiReconnectAttemptMs) >= WIFI_RECONNECT_INTERVAL_MS) {
-      lastWifiReconnectAttemptMs = now;
-      Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
-      configureStableWifiSta();
-      WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+    if (wifiNow) {
+      wifiLostAtMs = 0;
+      if (!prevWifiConnected) {
+        prevWifiConnected = true;
+        Serial.printf("[Foxie] Wi-Fi reconnected! IP: %s, RSSI: %d dBm\n",
+                      WiFi.localIP().toString().c_str(),
+                      WiFi.RSSI());
+        syncNtpTime(1500);
+        resolveCustomCityIfNeeded();
+        bool weatherOk = fetchWeatherOpenMeteo();
+        lastQueueSyncAttemptMs = 0;
+        if (!uiWifiConnected) {
+          uiWifiConnected = true;
+          renderStatusBarPartial(true);
+          readyPartialCount++;
+        }
+        if (weatherOk) {
+          renderBottomInfoPartial();
+          readyPartialCount++;
+        }
+        return;
+      }
+    } else {
+      if (prevWifiConnected) {
+        prevWifiConnected = false;
+        wifiLostAtMs = now;
+        lastWifiReconnectAttemptMs = now;
+        Serial.println("[Foxie] Wi-Fi disconnected (waiting debounce before UI update)");
+      }
+      if (uiWifiConnected && wifiLostAtMs != 0 &&
+          (now - wifiLostAtMs) >= WIFI_OFFLINE_UI_DEBOUNCE_MS) {
+        uiWifiConnected = false;
+        renderStatusBarPartial(false);
+        readyPartialCount++;
+      }
+      if (!cfg.wifiSsid.isEmpty() &&
+          (wifiRetryRequested || (now - lastWifiReconnectAttemptMs) >= WIFI_RECONNECT_INTERVAL_MS)) {
+        lastWifiReconnectAttemptMs = now;
+        wifiRetryRequested = false;
+        Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
+        configureStableWifiSta(true);
+        WiFi.disconnect(false);
+        delay(100);
+        WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+        return;
+      }
     }
+
+    now = millis();
 
     if (wifiNow && sdQueue.isMounted() && sdQueue.pendingCount() > 0 && isApiConfigured() &&
         (lastQueueSyncAttemptMs == 0 || (now - lastQueueSyncAttemptMs) >= QUEUE_SYNC_RETRY_MS)) {
@@ -1557,15 +1664,16 @@ void loop() {
 
     bool needBottomRefresh = false;
 
-    if (WiFi.status() == WL_CONNECTED &&
+    if (wifiNow &&
         (lastWeatherFetchMs == 0 || (now - lastWeatherFetchMs) >= WEATHER_REFRESH_MS)) {
       if (fetchWeatherOpenMeteo()) {
         needBottomRefresh = true;
       } else {
-        lastWeatherFetchMs = now;
+        lastWeatherFetchMs = millis();
       }
     }
 
+    now = millis();
     if (now - lastClockCheckMs >= 1000) {
       lastClockCheckMs = now;
       char tmp[8];
