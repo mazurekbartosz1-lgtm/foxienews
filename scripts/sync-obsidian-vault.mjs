@@ -98,6 +98,7 @@ async function main() {
   if (msgIdx >= 0 && process.argv[msgIdx + 1]) {
     commitMessage = process.argv[msgIdx + 1];
   }
+  const includeRootWiki = process.argv.includes("--include-root-wiki");
 
   const vaultDir = path.join(ROOT_DIR, "vault");
   const filesToSync = [];
@@ -107,11 +108,12 @@ async function main() {
     filesToSync.push({
       localPath: schemaPath,
       remotePath: joinRemotePath(vaultPrefix, "SCHEMA.md"),
+      protectedIfRemoteExists: false,
     });
   }
 
-  const wikiDir = path.join(vaultDir, "wiki");
-  for (const fullPath of collectFilesRecursively(wikiDir)) {
+  const projectDir = path.join(vaultDir, "wiki", "projekty", "foxie-notes");
+  for (const fullPath of collectFilesRecursively(projectDir)) {
     const relPosix = path
       .relative(vaultDir, fullPath)
       .split(path.sep)
@@ -119,6 +121,21 @@ async function main() {
     filesToSync.push({
       localPath: fullPath,
       remotePath: joinRemotePath(vaultPrefix, relPosix),
+      protectedIfRemoteExists: false,
+    });
+  }
+
+  for (const rootWikiFile of ["index.md", "log.md"]) {
+    const fullPath = path.join(vaultDir, "wiki", rootWikiFile);
+    if (!fs.existsSync(fullPath)) continue;
+    const relPosix = path
+      .relative(vaultDir, fullPath)
+      .split(path.sep)
+      .join("/");
+    filesToSync.push({
+      localPath: fullPath,
+      remotePath: joinRemotePath(vaultPrefix, relPosix),
+      protectedIfRemoteExists: !includeRootWiki,
     });
   }
 
@@ -156,7 +173,13 @@ async function main() {
   }
 
   const changedTreeEntries = [];
+  const skippedProtected = [];
   for (const file of filesToSync) {
+    if (file.protectedIfRemoteExists && remoteShaByPath.has(file.remotePath)) {
+      skippedProtected.push(file.remotePath);
+      continue;
+    }
+
     const buf = fs.readFileSync(file.localPath);
     const localSha = gitBlobSha1(buf);
     if (remoteShaByPath.get(file.remotePath) === localSha) {
@@ -177,6 +200,12 @@ async function main() {
       type: "blob",
       sha: blob.sha,
     });
+  }
+
+  if (skippedProtected.length > 0) {
+    console.log(
+      `[sync-vault] Preserved existing remote root wiki files: ${skippedProtected.join(", ")}`
+    );
   }
 
   if (changedTreeEntries.length === 0) {

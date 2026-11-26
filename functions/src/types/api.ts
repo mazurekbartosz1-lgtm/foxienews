@@ -51,3 +51,36 @@ export interface TaskDoc {
   tags?: string[];
   updatedAt: string;
 }
+
+export type NoteIntent =
+  | "knowledge"
+  | "project"
+  | "plan-calendar"
+  | "todo"
+  | "research-idea"
+  | "journal";
+
+export type InboxJobStatus = "processing" | "done" | "error";
+
+export interface InboxJobDoc {
+  id: string;
+  inboxPath: string;
+  processedPath?: string;
+  status: InboxJobStatus;
+  intent?: NoteIntent;
+  targetPath?: string;
+  commitSha?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizeInboxResult {
+  inboxPath: string;
+  status: "processed" | "skipped" | "error";
+  intent?: NoteIntent;
+  targetPath?: string;
+  processedPath?: string;
+  commitSha?: string;
+  reason?: string;
+}

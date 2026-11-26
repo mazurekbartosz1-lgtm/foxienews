@@ -26,6 +26,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Cloud agent inbox processing jobs (idempotency & audit log)
+    match /inbox_jobs/{jobId} {
+      allow read: if isAllowedUser();
+      allow write: if false;
+    }
+
     // Default deny for everything else
     match /{document=**} {
       allow read, write: if false;

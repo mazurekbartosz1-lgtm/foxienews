@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T16:30:00Z
+updated_at: 2026-11-26T16:50:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Faza 1 chmurowych agentów zakończona — Agent Organizator, webhook `obsydianandwiki` i test E2E na 8 notatkach:**
+  - Zatwierdzono taksonomię **PARA + Dziennik** (`projekty/`, `obszary/`, `pomysly/`, `zasoby/`, `dziennik/YYYY-MM-DD.md`) oraz przenoszenie przetworzonych oryginałów do `raw/processed/YYYY-MM/` w [`SCHEMA.md`](../../../vault/SCHEMA.md). Zabezpieczono [`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) przed nadpisywaniem zdalnych `wiki/index.md` i `wiki/log.md`.
+  - Rozbudowano [`github.ts`](../../../functions/src/services/github.ts) o klienta Git Data API (`createGitHubVaultClient` z atomowymi commitami, tworzeniem gałęzi i PR-ów), dodano kolejkę idempotencji `inbox_jobs` w [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) oraz [`firestore.rules`](../../../firestore.rules), zaimplementowano [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) i podpięto wyzwalacz webhooka z ochroną anti-loop w [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts) + endpoint `POST /api/agents/organize-inbox` w [`app.ts`](../../../functions/src/app.ts).
+  - Testy [`inboxOrganizer.test.ts`](../../../functions/src/__tests__/inboxOrganizer.test.ts) + całość `npm --prefix functions test`: `13/13` zaliczonych. Wdrożono `functions` (timeout `180 s`) i `firestore:rules`, podpięto webhook `push` na `mazurekbartosz1-lgtm/obsydianandwiki` (`id: 717206121`) i przeprocesowano wszystkie 8 notatek z `raw/inbox/` (`8/8 processed`, utworzono `wiki/obszary/auto/toyota.md`, `wiki/obszary/dom/zakupy.md`, `wiki/dziennik/2026-11-26.md`, zweryfikowano `GET /api/api/wiki/index` i `200 OK` na wszystkich dostarczeniach webhooka).
 - **Utrwalenie automatycznego workflow wznowienia i handoffu (`AGENTS.md`, `SKILL.md`):**
   - Rozszerzono [`AGENTS.md`](../../../AGENTS.md) i [`obsidian-commit-sync`](../../../.agents/skills/obsidian-commit-sync/SKILL.md) o stałe procedury szybkiego wznowienia (hasło `„kontynuujmy zadanie”` ładuje `status.md` + aktywną checklistę z `zadania/*.md` + `log.md` i startuje od pierwszego `[ ]`) oraz pełnego handoffu (aktualizacja `status.md`, `npm run sync:vault` do `obsydianandwiki`, commit i push `foxienews` na `origin/main`).
 - **Przygotowanie handoffu do budowy chmurowych agentów przed Etapem 2B (`web/`):**

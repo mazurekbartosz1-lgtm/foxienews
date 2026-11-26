@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T16:25:00Z
+updated_at: 2026-11-26T16:50:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -26,15 +26,16 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B` z krótkim pacingiem `delay(2)` i buforami `b64Out` / `WiFiClientSecure` przeniesionymi na stertę oraz powiększonym stosem `ARDUINO_LOOP_STACK_SIZE=16384`, co wyeliminowało `Stack canary watchpoint triggered (loopTask)` podczas TLS handshake), nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error`. Przed transferem TLS wyłączana jest przetwornica HV ekranu (`display.powerOff()`), a Wi-Fi pracuje z `WIFI_POWER_15dBm` i `WiFi.setSleep(false)`. **Zweryfikowano na `COM5`** (`stackFree=12032 B` po uploadzie HTTPS, `wifi=3` stabilne, `HTTP 201` do `obsydianandwiki/raw/inbox/`).
    - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`) i kartę SD (`SD_MMC.end()`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
-3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
-   - Funkcja Cloud Functions v2 `api` (`europe-west1`, Node.js 22) wdrożona na `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` i zweryfikowana na żywo (`GET /api/api/health` -> `200 {"ok":true,"service":"foxie-api"}`).
+3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A + Agent Organizator Faza 1) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
+   - Funkcja Cloud Functions v2 `api` (`europe-west1`, Node.js 22, timeout `180 s`) wdrożona na `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` wraz z regułami `firestore.rules` (w tym `inbox_jobs` read-only dla `ALLOWED_USER_EMAIL`) i zweryfikowana na żywo (`GET /api/api/health` -> `200 {"ok":true,"service":"foxie-api"}`).
    - Wszystkie 5 sekretów (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) zapisane w Firebase Secret Manager oraz lokalnie w gitignorowanym `functions/.secret.local`; docelowy vault chmury przełączony na prywatne repo **`GITHUB_OWNER=mazurekbartosz1-lgtm`, `GITHUB_REPO=obsydianandwiki`**, `GITHUB_VAULT_PREFIX=` (`raw/inbox/`), `GEMINI_MODEL=gemini-3.8-flash` w `functions/.env`; `ALLOWED_USER_EMAIL` ustawione w `firestore.rules`.
-   - Automatyczna synchronizacja dokumentacji (`vault/SCHEMA.md` + `vault/wiki/**`) do prywatnego `obsydianandwiki` przez `npm run sync:vault` ([`scripts/sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs)) jako pojedynczy atomowy commit bez naruszania `raw/inbox/`.
+   - Automatyczna synchronizacja dokumentacji (`vault/SCHEMA.md` + `vault/wiki/projekty/foxie-notes/**`) do prywatnego `obsydianandwiki` przez `npm run sync:vault` ([`scripts/sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs)) jako pojedynczy atomowy commit bez naruszania `raw/` ani zdalnych `wiki/index.md` i `wiki/log.md`.
    - `firmware/include/config.h` (chronione przez `.gitignore`) zaktualizowane o docelowy URL chmurowy i `DEVICE_API_KEY`.
-   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 3.8 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do repozytorium GitHub z obsługą `GITHUB_VAULT_PREFIX` oraz `GITHUB_INBOX_DIR`, domyślnie `raw/inbox`).
+   - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 3.8 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do `raw/inbox/`).
    - Lokalny serwer LAN do testów E2E z urządzenia: `npm --prefix functions run dev` (`devServer.ts` ładujący `.env` + `.secret.local`, nasłuch na `0.0.0.0:8787`).
-   - **Etap 2A (Webhook GitHub -> Firestore + API Wiki):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `9/9` przypadkach (`tsc` + `node --test`).
+   - **Etap 2A + Webhook GitHub (`obsydianandwiki`, hook `717206121`):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
+   - **Faza 1 — Agent Organizator (`inboxOrganizer.ts` + `github.ts` + `POST /api/agents/organize-inbox`):** Webhook `push` automatycznie wykrywa nowe pliki `raw/inbox/*.md` (z ochroną anti-loop ignorującą commity `agent(` oraz `docs(vault):`), klasyfikuje notatki przez `gemini-3.8-flash` według taksonomii **PARA + Dziennik** (`projekty/`, `obszary/`, `pomysly/`, `zasoby/`, `dziennik/YYYY-MM-DD.md`), deterministycznie dopisuje sekcje/zadania/źródła do `wiki/`, aktualizuje `wiki/index.md` i `wiki/log.md` oraz przenosi oryginał w tym samym atomowym commicie do `raw/processed/YYYY-MM/`. Idempotencja śledzona transakcyjnie w Firestore (`inbox_jobs`). **Zweryfikowano na żywo:** wszystkie 8 zaległych notatek z `obsydianandwiki/raw/inbox/` przetworzone (`8/8 processed, 0 errors`, utworzono `wiki/obszary/auto/toyota.md`, `wiki/obszary/dom/zakupy.md`, `wiki/dziennik/2026-11-26.md`), webhook dostarczył wszystkie zdarzenia `200 OK`, a `GET /api/api/wiki/index` zwraca zsynchronizowane strony.
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `13/13` przypadkach (`tsc` + `node --test`).
 
 ## Kluczowe decyzje i pułapki
 
@@ -43,14 +44,14 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 - **Model Gemini:** Nowe klucze Google AI Studio wymagają `gemini-3.8-flash` (`gemini-2.5-flash` zwraca `404` dla nowych użytkowników) — zweryfikowano na żywo (`OK`).
 - **Sekrety lokalne:** `firmware/include/config.h` zawiera lokalne dane Wi-Fi i jest chroniony przez `.gitignore` — **nigdy** nie dodawaj go do gita ani nie wpisuj haseł do `vault/`.
 - **PowerShell 5.1 na Windows:** Operator `&&` nie działa w lokalnym Windows PowerShell 5.1; w skryptach/komendach używaj `;` z `$ErrorActionPreference = 'Stop'`.
+- **Ochrona `wiki/index.md` i `wiki/log.md` w `sync-obsidian-vault.mjs`:** Skrypt `npm run sync:vault` synchronizuje `SCHEMA.md` oraz `vault/wiki/projekty/foxie-notes/**`, a korzeń (`wiki/index.md`, `wiki/log.md`) zapisuje tylko jeśli nie istnieje jeszcze zdalnie (lub z flagą `--include-root-wiki`), dzięki czemu nie nadpisuje wpisów utworzonych przez Agenta Organizatora w `obsydianandwiki`.
 - **Workflow commitów:** Każda zmiana przed `git commit` musi zaktualizować ten plik, listy w `zadania/` oraz `vault/wiki/log.md` zgodnie ze skillem `.agents/skills/obsidian-commit-sync/SKILL.md`.
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Chmurowi Agenci nad `obsydianandwiki` (`[[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi]]`) — realizowane PRZED `web/`:**
-   - W nowym oknie kontekstowym (po haśle użytkownika `„kontynuujmy zadanie”`) wczytaj `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md`, przeanalizuj aktualne pliki w `obsydianandwiki/raw/inbox/` i zacznij od **Kroku startowego + Fazy 1 (Agent Organizator)**:
-     - Ustal z użytkownikiem docelową taksonomię katalogów w `SCHEMA.md` oraz obsługę `raw/inbox/` vs `raw/processed/`, podepnij webhook GitHuba na `obsydianandwiki` -> `POST /api/webhook/github`.
-     - Następnie wdróż **Fazę 1** (Organizator porządkujący nowe notatki w podkatalogi `wiki/` + `index.md` + `log.md`), **Fazę 2** (Researcher otwierający Pull Requesty w Git do review) oraz **Fazę 3** (Agent Planowania z Google Calendar + Google Tasks).
+1. **Priorytet 1 — Chmurowi Agenci nad `obsydianandwiki` (`[[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi]]`) — Faza 2 i Faza 3 (PRZED `web/`):**
+   - Krok startowy i Faza 1 (Agent Organizator + webhook) są zakończone i działają w chmurze.
+   - Następny punkt z checklisty: **Faza 2 — Agent Researcher (Analiza `research-idea` -> Pull Request w Git)** (`researchAgent`, Google Search grounding, gałąź `agent/research-<slug>`, automatyczny PR do review w `obsydianandwiki`), a następnie **Faza 3 — Agent Planowania** (Google Calendar + Google Tasks).
 2. **Priorytet 2 (po uruchomieniu agentów) — Etap 2B: Aplikacja webowa (`web/`, `[[projekty/foxie-notes/zadania/etap-2-wiki-webapp]]`):**
    - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`) oraz wdrożyć `firestore:rules` i `hosting`.
 

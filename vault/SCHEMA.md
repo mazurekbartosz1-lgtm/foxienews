@@ -10,23 +10,41 @@ Ten dokument określa jednolity format plików dla backendu (`/api/capture`), ag
 vault/
 ├── SCHEMA.md                          # Ten dokument z zasadami
 ├── raw/
-│   └── inbox/                         # Surowe notatki z urządzeń e-ink i web appa (APPEND-ONLY)
-│       └── 2026-11-25T07-45-12Z-waveshare-154-pomysl.md
+│   ├── inbox/                         # Kolejka surowych notatek z urządzeń e-ink i web appa
+│   │   └── 2026-11-25T07-45-12Z-waveshare-154-pomysl.md
+│   └── processed/                     # Oryginały przeniesione po przetworzeniu przez Agenta Organizatora
+│       └── 2026-11/
+│           └── 2026-11-25T07-45-12Z-waveshare-154-pomysl.md
 └── wiki/
-    ├── index.md                       # Główny spis treści utrzymywany przez LLM Wiki
-    ├── log.md                         # Chronologiczny dziennik zmian wykonanych przez LLM Wiki
-    ├── <slug>.md                      # Ogólne strony wiedzy
-    └── projekty/
-        └── <projekt>/                 # Dedykowany folder projektu
-            ├── index.md               # Główna strona projektu i decyzje architektoniczne
-            ├── <notatka>.md           # Notatki techniczne / sprzętowe projektu
-            └── zadania/               # Podfolder z listami zadań do zrobienia
-                └── <zakres>.md        # Checklista zadań (- [ ] / - [x])
+    ├── index.md                       # Główny spis treści (sekcje: Projekty, Obszary, Pomysły, Zasoby, Dziennik, System)
+    ├── log.md                         # Chronologiczny dziennik zmian wykonanych przez LLM Wiki i agentów
+    ├── projekty/
+    │   └── <projekt>/                 # Dedykowany folder aktywnego projektu (np. foxie-notes/)
+    │       ├── index.md               # Główna strona projektu i decyzje architektoniczne
+    │       ├── <notatka>.md           # Notatki techniczne / sprzętowe projektu
+    │       └── zadania/               # Podfolder z listami zadań do zrobienia
+    │           └── <zakres>.md        # Checklista zadań (- [ ] / - [x])
+    ├── obszary/
+    │   └── <obszar>/                  # Stałe obszary życia (np. dom/, auto/, zdrowie/, finanse/, praca/)
+    │       └── <temat>.md
+    ├── pomysly/
+    │   └── <temat>.md                 # Pomysły i kandydaci do analizy przez Researchera (research-idea)
+    ├── zasoby/
+    │   └── <temat>.md                 # Wiedza referencyjna, artykuły, narzędzia, materiały
+    └── dziennik/
+        └── YYYY-MM-DD.md              # Dziennik dzienny (obserwacje, refleksje, notatki #test)
 ```
 
-### Zasada niezmienności `raw/inbox/`
+### Przepływ `raw/inbox/` -> `raw/processed/YYYY-MM/`
 - Endpoint `POST /api/capture` tworzy **wyłącznie nowe pliki** w `raw/inbox/`.
-- LLM Wiki traktuje `raw/inbox/` jako **tylko do odczytu** (nie edytuje ani nie usuwa surowych wpisów; przetworzoną wiedzę syntetyzuje w `wiki/` i odnotowuje w `wiki/log.md`).
+- **Agent Organizator** przetwarza nowe notatki z `raw/inbox/`, klasyfikuje ich intencję, syntetyzuje treść w odpowiednim podkatalogu `wiki/` (PARA + Dziennik), aktualizuje `wiki/index.md` oraz `wiki/log.md` i **w tym samym atomowym commicie** przenosi niezmieniony oryginał do `raw/processed/YYYY-MM/<plik>.md` (pozostawiając `raw/inbox/.gitkeep`).
+- Żadne surowe nagranie/transkrypcja nie jest usuwane — archiwum w `raw/processed/` pozostaje tylko do odczytu.
+
+### Konwencja commitów agentów (ochrona przed pętlą webhooków)
+- Agent Organizator: `agent(organizer): <krótki tytuł> (<intent>)`
+- Agent Researcher: `agent(researcher): <krótki tytuł>`
+- Agent Planowania: `agent(planner): <krótki tytuł>`
+- Webhook `POST /api/webhook/github` ignoruje commity z prefiksem `agent(` lub `docs(vault):` przy wykrywaniu nowych plików `raw/inbox/*.md`, aby nie tworzyć pętli zwrotnych.
 
 ### Dedykowane foldery projektów (`wiki/projekty/<projekt>/`)
 - Każdy większy projekt posiada własny katalog w `wiki/projekty/<projekt>/`.
@@ -89,7 +107,7 @@ Powiązane: [[inny-temat]], [[lista-zadan]]
 
 ## 4. Spis treści (`wiki/index.md`) i dziennik (`wiki/log.md`)
 
-- `wiki/index.md` zawiera listę aktywnych stron i projektów w formacie:
+- `wiki/index.md` grupuje aktywne strony w sekcjach: `## Projekty`, `## Obszary`, `## Pomysły`, `## Zasoby`, `## Dziennik`, `## System`, w formacie:
   ```markdown
   - [[projekty/foxie-notes/index|Foxie Notes]] — Krótki opis (tagi: #projekt, #esp32)
   ```

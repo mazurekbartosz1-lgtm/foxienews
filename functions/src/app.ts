@@ -8,21 +8,34 @@ import {
 } from "./services/gemini.js";
 import {
   commitMarkdownToVault,
+  createGitHubVaultClient,
   fetchVaultFileFromGitHub,
   type CommitVaultResult,
+  type GitHubVaultClient,
 } from "./services/github.js";
 import {
   createFirestoreVaultStore,
   type VaultStore,
 } from "./services/firestoreStore.js";
+import {
+  organizeInboxFile,
+  organizePendingInboxFiles,
+  type ClassifyInboxNoteFn,
+} from "./services/inboxOrganizer.js";
 import { buildCaptureMarkdown, buildInboxPath } from "./services/markdown.js";
 import { normalizeSlug } from "./services/wikiParser.js";
 import {
+  extractNewInboxFilesFromPush,
   syncGitHubPush,
   verifyGitHubWebhookSignature,
   type GitHubPushPayload,
 } from "./services/wikiSync.js";
-import type { CaptureRequest, CaptureResponse, CaptureSource } from "./types/api.js";
+import type {
+  CaptureRequest,
+  CaptureResponse,
+  CaptureSource,
+  OrganizeInboxResult,
+} from "./types/api.js";
 
 interface RawBodyRequest extends express.Request {
   rawBody?: Buffer;
@@ -46,6 +59,9 @@ export interface AppDeps {
   }) => Promise<CommitVaultResult>;
   vaultStore?: VaultStore;
   fetchVaultFile?: (path: string, ref?: string) => Promise<string | null>;
+  vaultClient?: GitHubVaultClient;
+  classifyInboxNote?: ClassifyInboxNoteFn;
+  enableInboxOrganizer?: boolean;
   now?: () => Date;
 }
 
@@ -307,14 +323,95 @@ export function createApp(deps: AppDeps = {}): express.Express {
         now: getNow,
       });
 
+      const newInboxFiles = extractNewInboxFilesFromPush(
+        payload,
+        process.env.GITHUB_VAULT_PREFIX,
+      );
+      const canRunOrganizer =
+        deps.enableInboxOrganizer !== false &&
+        (Boolean(deps.vaultClient) ||
+          (Boolean(process.env.GITHUB_TOKEN?.trim()) &&
+            Boolean(process.env.GEMINI_API_KEY?.trim())));
+
+      const organized: OrganizeInboxResult[] = [];
+      if (newInboxFiles.length > 0 && canRunOrganizer) {
+        const client = deps.vaultClient ?? createGitHubVaultClient();
+        for (const inboxRepoPath of newInboxFiles) {
+          try {
+            const orgResult = await organizeInboxFile({
+              inboxRepoPath,
+              vaultClient: client,
+              store: vaultStore,
+              classifyNote: deps.classifyInboxNote,
+              vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+              now: getNow,
+            });
+            organized.push(orgResult);
+          } catch (orgErr) {
+            const orgMessage =
+              orgErr instanceof Error ? orgErr.message : "Failed to organize inbox note";
+            console.error("[/api/webhook/github] Organizer error:", orgMessage);
+            organized.push({
+              inboxPath: inboxRepoPath,
+              status: "error",
+              reason: orgMessage,
+            });
+          }
+        }
+      }
+
       res.json({
         ok: true,
         ...result,
+        ...(organized.length > 0 ? { organized } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sync GitHub push";
       console.error("[/api/webhook/github] Error:", message);
       res.status(502).json({ error: message });
+    }
+  });
+
+  // Faza 1: Batch or on-demand Inbox Organizer agent trigger
+  app.post("/api/agents/organize-inbox", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as {
+      paths?: unknown;
+      limit?: unknown;
+      force?: unknown;
+    };
+
+    const paths = Array.isArray(body.paths)
+      ? body.paths.filter((p): p is string => typeof p === "string")
+      : undefined;
+    const limit =
+      typeof body.limit === "number" && Number.isFinite(body.limit) && body.limit > 0
+        ? Math.floor(body.limit)
+        : undefined;
+    const force = body.force === true;
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const summary = await organizePendingInboxFiles({
+        vaultClient: client,
+        store: vaultStore,
+        classifyNote: deps.classifyInboxNote,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        paths,
+        limit,
+        force,
+        now: getNow,
+      });
+
+      res.json({
+        ok: true,
+        ...summary,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to organize pending inbox files";
+      console.error("[/api/agents/organize-inbox] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
     }
   });
 

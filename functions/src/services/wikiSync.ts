@@ -9,6 +9,7 @@ import {
 } from "./wikiParser.js";
 
 export interface GitHubPushCommit {
+  message?: string;
   added?: string[];
   modified?: string[];
   removed?: string[];
@@ -70,6 +71,37 @@ export function extractVaultRelativePath(
 function isVaultMarkdownFile(relativePath: string): boolean {
   if (!/\.md$/i.test(relativePath)) return false;
   return relativePath.startsWith("wiki/") || relativePath.startsWith("raw/inbox/");
+}
+
+function isAgentOrSyncCommitMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  const trimmed = message.trim().toLowerCase();
+  return trimmed.startsWith("agent(") || trimmed.startsWith("docs(vault):");
+}
+
+export function extractNewInboxFilesFromPush(
+  payload: GitHubPushPayload,
+  vaultPrefix = "",
+): string[] {
+  const candidates = new Set<string>();
+
+  for (const commit of payload.commits ?? []) {
+    if (isAgentOrSyncCommitMessage(commit.message)) {
+      continue;
+    }
+
+    for (const p of commit.added ?? []) {
+      const rel = extractVaultRelativePath(p, vaultPrefix);
+      if (rel && rel.startsWith("raw/inbox/") && /\.md$/i.test(rel)) {
+        candidates.add(p);
+      }
+    }
+    for (const p of commit.removed ?? []) {
+      candidates.delete(p);
+    }
+  }
+
+  return Array.from(candidates).sort();
 }
 
 export async function syncGitHubPush(params: {

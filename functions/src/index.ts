@@ -15,7 +15,7 @@ export const api = onRequest(
   {
     region: "europe-west1",
     memory: "512MiB",
-    timeoutSeconds: 60,
+    timeoutSeconds: 180,
     secrets: [
       githubToken,
       geminiApiKey,

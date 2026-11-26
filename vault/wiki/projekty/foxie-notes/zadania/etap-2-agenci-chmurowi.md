@@ -1,7 +1,7 @@
 ---
 title: Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)
 slug: projekty/foxie-notes/zadania/etap-2-agenci-chmurowi
-updated_at: 2026-11-26T16:25:00Z
+updated_at: 2026-11-26T16:50:00Z
 tags: [zadania, agenci, chmura, obsidian, foxie-notes]
 ---
 
@@ -42,15 +42,15 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 ## Checklista wdrożenia (do realizacji po kolei)
 
 ### Krok startowy (pierwsze decyzje z użytkownikiem w nowym oknie)
-- [ ] Potwierdzić docelową taksonomię folderów w `obsydianandwiki/SCHEMA.md` (np. `projekty/`, `obszary/`, `pomysly/`, `zasoby/`, `dziennik/` + zasady nazewnictwa) #agenci #architektura
-- [ ] Ustalić los przetworzonych plików w `raw/inbox/`: pełne `append-only` (znacznik przetworzenia w Firestore/`wiki`) czy przenoszenie do `raw/processed/YYYY-MM/` #agenci #architektura
-- [ ] Skonfigurować webhook `push` na repozytorium `mazurekbartosz1-lgtm/obsydianandwiki` wskazujący na `/api/api/webhook/github` z `GITHUB_WEBHOOK_SECRET` #agenci #github
+- [x] Potwierdzić docelową taksonomię folderów w `obsydianandwiki/SCHEMA.md` (**PARA + Dziennik**: `projekty/`, `obszary/`, `pomysly/`, `zasoby/`, `dziennik/YYYY-MM-DD.md`) #agenci #architektura
+- [x] Ustalić los przetworzonych plików w `raw/inbox/`: przenoszenie oryginałów w atomowym commicie do `raw/processed/YYYY-MM/` (czysty inbox w Obsidianie) #agenci #architektura
+- [x] Skonfigurować webhook `push` na repozytorium `mazurekbartosz1-lgtm/obsydianandwiki` wskazujący na `/api/api/webhook/github` z `GITHUB_WEBHOOK_SECRET` (webhook `id: 717206121`, `ping` + `push` `200 OK`) #agenci #github
 
 ### Faza 1 — Agent Organizator (Triage & Taksonomia)
-- [ ] Rozbudować `POST /api/webhook/github` o wykrywanie nowych plików `raw/inbox/*.md` i pomijanie commitów własnych agentów (brak pętli zwrotnej) #agenci #backend
-- [ ] Dodać w `functions/src/services/` serwis atomowych operacji GitHub Git Data API (odczyt drzewa katalogów, tworzenie blobów/drzew/commitów, tworzenie branchy i Pull Requestów) #agenci #github
-- [ ] Zaimplementować `inboxOrganizer` (Gemini `gemini-3.8-flash` ze schematem JSON: klasyfikacja intencji, dobór istniejącego lub nowego podkatalogu, linki `[[wikilinks]]`, aktualizacja `wiki/index.md` i `wiki/log.md`) oraz zapis stanu w Firestore (`inbox_jobs`) #agenci #ai
-- [ ] Dodać testy jednostkowe / integracyjne (`npm --prefix functions test`) i wdrożyć zaktualizowaną funkcję `api` w Firebase (`gen-lang-client-0751515487`) #agenci #testy
+- [x] Rozbudować `POST /api/webhook/github` o wykrywanie nowych plików `raw/inbox/*.md` i pomijanie commitów własnych agentów (`agent(...)`, `docs(vault):`) — brak pętli zwrotnej #agenci #backend
+- [x] Dodać w `functions/src/services/github.ts` serwis atomowych operacji GitHub Git Data API (`createGitHubVaultClient`: odczyt drzewa, atomowe bloby/drzewa/commity, tworzenie branchy i Pull Requestów) #agenci #github
+- [x] Zaimplementować `inboxOrganizer.ts` (`gemini-3.8-flash` + deterministyczne składanie/scalanie Markdown, `wiki/index.md`, `wiki/log.md`, przenoszenie do `raw/processed/YYYY-MM/` oraz kolejka idempotencji `inbox_jobs` w Firestore) i endpoint `POST /api/agents/organize-inbox` #agenci #ai
+- [x] Dodać testy jednostkowe / integracyjne (`npm --prefix functions test` -> `13/13`), wdrożyć funkcję `api` + `firestore:rules` i przeprocesować 8 istniejących notatek w `obsydianandwiki/raw/inbox/` (`8/8 processed`, zero błędów) #agenci #testy
 
 ### Faza 2 — Agent Researcher (Analiza -> Git Pull Request)
 - [ ] Zaimplementować `researchAgent` (Gemini z Google Search grounding generujący ustrukturyzowany raport + źródła + rekomendację kroków) #agenci #ai
