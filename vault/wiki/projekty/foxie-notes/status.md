@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T05:50:00Z
+updated_at: 2026-11-26T05:57:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -26,9 +26,10 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Wysyłka `POST /api/capture` (`capture_client.h/.cpp`):** strumieniowe kodowanie Base64 (`mbedtls_base64_encode`, chunki `3072 B`) bez duplikacji bufora w DRAM, nagłówek `X-API-Key`, obsługa HTTP/HTTPS oraz przejść `Recording` -> `Uploading` -> `Saved` / `Error` (z krótkim kodem błędu na ekranie, np. `BRAK API URL`).
    - Głęboki sen (`Hibernate`) po ≥ 2 godzinach bezczynności: bezpiecznie usypia ES8311 (`PIN_AUDIO_PWR=HIGH`), wyłącza Wi-Fi i przechodzi w `deep_sleep` z wybudzeniem przez `ext1` (przycisk lub dotyk `PIN_TP_INT = GPIO21`) oraz cichym timerem RTC co minutę do aktualizacji samego zegara. Po utracie zasilania SSD1681 w hibernacji bufor `0x26` jest odtwarzany przez `nextPageToPrevious()` przed partial refreshem, a co 30 minut wykonywane jest pełne czyszczące odświeżenie (`EPD_FULL_REFRESH_EVERY`).
 
-3. **Backend Firebase (`functions/`, Etap 1B)**
+3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A)**
    - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 2.5 Flash -> commit Markdown do repozytorium GitHub z obsługą opcjonalnego `GITHUB_VAULT_PREFIX`).
-   - Testy jednostkowe (`npm --prefix functions test`) przechodzą w `4/4` przypadkach (`tsc` + `node --test`).
+   - **Etap 2A (Webhook GitHub -> Firestore + API Wiki):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `9/9` przypadkach (`tsc` + `node --test`).
 
 ## Kluczowe decyzje i pułapki
 
@@ -40,11 +41,10 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Etap 1B — konfiguracja i test end-to-end backendu + pierwsza notatka głosowa z płytki:**
-   - Zainstalować `firebase-tools` (`npm install -g firebase-tools`), skonfigurować lokalne sekrety Firebase (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `DEVICE_API_KEY`) poza gitem (`functions/.secret.local` / `functions/.env`) i przetestować `POST /api/capture` (emulator Firebase lub deploy testowy).
-   - Wpisać docelowy URL API i `X-API-Key` w Captive Portalu (`192.168.4.1`) lub lokalnym `firmware/include/config.h`, a następnie przetestować pełny cykl `BOOT` (nagranie głosu) -> `Sending` -> `Saved` -> commit `.md` w `raw/inbox/` na GitHubie.
-2. **Etap 2 — synchronizacja wiki i aplikacja webowa:**
-   - Po zamknięciu pełnego testu E2E Etapu 1 przejść do [[projekty/foxie-notes/zadania/etap-2-wiki-webapp|Zadań — Etap 2]].
+1. **Etap 2B — Aplikacja webowa (`web/`):**
+   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`).
+2. **Etap 1B — konfiguracja sekretów i test end-to-end backendu + pierwsza notatka głosowa z płytki:**
+   - Zainstalować `firebase-tools` (`npm install -g firebase-tools`), skonfigurować sekrety (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) poza gitem (`functions/.secret.local` / `functions/.env` lub Firebase Secret Manager) i przetestować pełny cykl `BOOT` (nagranie głosu) -> `Sending` -> `Saved` -> commit `.md` w `raw/inbox/` na GitHubie oraz sync webhookiem do Firestore.
 
 ## Pliki startowe do wczytania w nowym oknie
 

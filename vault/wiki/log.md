@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T05:50:00Z
+updated_at: 2026-11-26T05:57:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Etap 2A zakończony — Webhook GitHub, parser zadań/Markdown i API Wiki (`functions/`):**
+  - Zaimplementowano [`wikiParser.ts`](../../../functions/src/services/wikiParser.ts) (frontmatter, `markdownToPlainText`, `extractTasksFromMarkdown` dla `- [ ]`/`- [x]` z `@due(...)`, `#tag` i priorytetem), odczyt plików z GitHuba w [`github.ts`](../../../functions/src/services/github.ts), warstwę Firestore [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) (`wiki_pages`, `wiki_meta/index`, `tasks` + `InMemoryVaultStore`) oraz orkiestrator [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts) z weryfikacją `X-Hub-Signature-256`.
+  - Podpięto `POST /api/webhook/github`, `GET /api/wiki/index` (`?q=`) i `GET /api/wiki/page/*` (`?format=plain`) w [`app.ts`](../../../functions/src/app.ts); testy w [`wikiSync.test.ts`](../../../functions/src/__tests__/wikiSync.test.ts) + [`capture.test.ts`](../../../functions/src/__tests__/capture.test.ts) przechodzą w `9/9` przypadkach (`npm --prefix functions test`).
 - **Naprawa „śnieżenia” e-Paper po wybudzeniu zegara w hibernacji:** Odcięcie zasilania panelu (`PIN_EPD_PWR=HIGH`) kasowało pamięć RAM kontrolera SSD1681 (`0x24` i `0x26`), przez co cichy partial refresh zegara porównywał wyczyszczone okno zegara z losowymi bajtami na reszcie ekranu. W [`main.cpp`](../../../firmware/src/main.cpp) dodano deterministyczny `drawHibernationFrame()`, odtwarzanie poprzedniej klatki w `0x26` przez `display.nextPageToPrevious()` przed `display.display(true)`, okresowe pełne czyszczenie co 30 minut (`EPD_FULL_REFRESH_EVERY`, w hibernacji i w `Ready`) oraz `display.end()` przed odłączeniem zasilania panelu.
 
 ## 2026-11-25

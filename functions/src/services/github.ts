@@ -5,11 +5,7 @@ export interface CommitVaultResult {
   commitSha: string;
 }
 
-export async function commitMarkdownToVault(params: {
-  path: string;
-  content: string;
-  commitMessage: string;
-}): Promise<CommitVaultResult> {
+function readGitHubEnv() {
   const token = process.env.GITHUB_TOKEN?.trim();
   const owner = process.env.GITHUB_OWNER?.trim();
   const repo = process.env.GITHUB_REPO?.trim();
@@ -21,6 +17,15 @@ export async function commitMarkdownToVault(params: {
     );
   }
 
+  return { token, owner, repo, branch };
+}
+
+export async function commitMarkdownToVault(params: {
+  path: string;
+  content: string;
+  commitMessage: string;
+}): Promise<CommitVaultResult> {
+  const { token, owner, repo, branch } = readGitHubEnv();
   const octokit = new Octokit({ auth: token });
   const encodedContent = Buffer.from(params.content, "utf8").toString("base64");
 
@@ -37,4 +42,37 @@ export async function commitMarkdownToVault(params: {
     path: response.data.content?.path ?? params.path,
     commitSha: response.data.commit.sha ?? "",
   };
+}
+
+export async function fetchVaultFileFromGitHub(
+  path: string,
+  ref?: string,
+): Promise<string | null> {
+  const { token, owner, repo, branch } = readGitHubEnv();
+  const octokit = new Octokit({ auth: token });
+
+  try {
+    const response = await octokit.rest.repos.getContent({
+      owner,
+      repo,
+      path,
+      ref: ref || branch,
+    });
+
+    if (Array.isArray(response.data) || response.data.type !== "file") {
+      return null;
+    }
+
+    if (typeof response.data.content !== "string") {
+      return null;
+    }
+
+    return Buffer.from(response.data.content, "base64").toString("utf8");
+  } catch (err: unknown) {
+    const status = (err as { status?: number })?.status;
+    if (status === 404) {
+      return null;
+    }
+    throw err;
+  }
 }

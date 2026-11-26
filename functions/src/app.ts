@@ -8,10 +8,25 @@ import {
 } from "./services/gemini.js";
 import {
   commitMarkdownToVault,
+  fetchVaultFileFromGitHub,
   type CommitVaultResult,
 } from "./services/github.js";
+import {
+  createFirestoreVaultStore,
+  type VaultStore,
+} from "./services/firestoreStore.js";
 import { buildCaptureMarkdown, buildInboxPath } from "./services/markdown.js";
+import { normalizeSlug } from "./services/wikiParser.js";
+import {
+  syncGitHubPush,
+  verifyGitHubWebhookSignature,
+  type GitHubPushPayload,
+} from "./services/wikiSync.js";
 import type { CaptureRequest, CaptureResponse, CaptureSource } from "./types/api.js";
+
+interface RawBodyRequest extends express.Request {
+  rawBody?: Buffer;
+}
 
 const VALID_SOURCES = new Set<CaptureSource>([
   "waveshare-154",
@@ -29,6 +44,8 @@ export interface AppDeps {
     content: string;
     commitMessage: string;
   }) => Promise<CommitVaultResult>;
+  vaultStore?: VaultStore;
+  fetchVaultFile?: (path: string, ref?: string) => Promise<string | null>;
   now?: () => Date;
 }
 
@@ -45,13 +62,23 @@ function isValidBase64(value: string): boolean {
 export function createApp(deps: AppDeps = {}): express.Express {
   const processAudio = deps.processAudio ?? processAudioWithGemini;
   const commitToVault = deps.commitToVault ?? commitMarkdownToVault;
+  const vaultStore = deps.vaultStore ?? createFirestoreVaultStore();
+  const fetchVaultFile = deps.fetchVaultFile ?? fetchVaultFileFromGitHub;
   const getNow = deps.now ?? (() => new Date());
 
   const app = express();
 
   app.use(cors({ origin: true }));
   // 15 MiB limit to accommodate Base64-encoded WAV recordings from ESP32-S3 PSRAM
-  app.use(express.json({ limit: "15mb" }));
+  // Keep rawBody buffer for GitHub webhook HMAC-SHA256 verification
+  app.use(
+    express.json({
+      limit: "15mb",
+      verify: (req, _res, buf) => {
+        (req as RawBodyRequest).rawBody = buf;
+      },
+    }),
+  );
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "foxie-api" });
@@ -155,30 +182,139 @@ export function createApp(deps: AppDeps = {}): express.Express {
     }
   });
 
-  // Etap 2: Lightweight Wiki endpoints backed by Firestore cache
-  app.get("/api/wiki/index", requireAuth, (_req, res) => {
-    res.status(501).json({
-      error: "Not Implemented",
-      stage: "Etap 2A",
-      endpoint: "GET /api/wiki/index",
-    });
+  // Etap 2A: Lightweight Wiki endpoints backed by Firestore cache
+  app.get("/api/wiki/index", requireAuth, async (req, res) => {
+    try {
+      const indexDoc = (await vaultStore.getWikiIndex()) ?? {
+        entries: [],
+        updatedAt: "",
+      };
+      const query =
+        typeof req.query.q === "string" ? req.query.q.trim().toLowerCase() : "";
+
+      const entries = query
+        ? indexDoc.entries.filter(
+            (entry) =>
+              entry.slug.toLowerCase().includes(query) ||
+              entry.title.toLowerCase().includes(query) ||
+              entry.summary.toLowerCase().includes(query) ||
+              entry.tags.some((tag) => tag.toLowerCase().includes(query)),
+          )
+        : indexDoc.entries;
+
+      res.json({
+        entries,
+        updatedAt: indexDoc.updatedAt,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load wiki index";
+      console.error("[/api/wiki/index] Error:", message);
+      res.status(500).json({ error: message });
+    }
   });
 
-  app.get("/api/wiki/page/:slug", requireAuth, (_req, res) => {
-    res.status(501).json({
-      error: "Not Implemented",
-      stage: "Etap 2A",
-      endpoint: "GET /api/wiki/page/:slug",
-    });
+  app.get("/api/wiki/page/*", requireAuth, async (req, res) => {
+    const rawWildcard =
+      (req.params as Record<string, string>)["0"] ??
+      req.path.replace(/^\/api\/wiki\/page\/?/, "");
+
+    let decodedSlug = "";
+    try {
+      decodedSlug = decodeURIComponent(rawWildcard);
+    } catch {
+      res.status(400).json({ error: "Malformed wiki page slug encoding" });
+      return;
+    }
+
+    const slug = normalizeSlug(decodedSlug);
+    if (!slug || slug.split("/").some((segment) => segment === "..")) {
+      res.status(400).json({ error: "Invalid wiki page slug" });
+      return;
+    }
+
+    try {
+      const page = await vaultStore.getWikiPage(slug);
+      if (!page) {
+        res.status(404).json({ error: "Wiki page not found" });
+        return;
+      }
+
+      if (req.query.format === "plain") {
+        res.json({
+          slug: page.slug,
+          title: page.title,
+          plainText: page.plainText,
+          tags: page.tags,
+          updatedAt: page.updatedAt,
+        });
+        return;
+      }
+
+      res.json(page);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load wiki page";
+      console.error("[/api/wiki/page] Error:", message);
+      res.status(500).json({ error: message });
+    }
   });
 
-  // Etap 2: GitHub push webhook (verified via X-Hub-Signature-256)
-  app.post("/api/webhook/github", (_req, res) => {
-    res.status(501).json({
-      error: "Not Implemented",
-      stage: "Etap 2A",
-      endpoint: "POST /api/webhook/github",
-    });
+  // Etap 2A: GitHub push webhook (verified via X-Hub-Signature-256)
+  app.post("/api/webhook/github", async (req, res) => {
+    const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() ?? "";
+    if (!secret) {
+      res.status(500).json({ error: "Missing GITHUB_WEBHOOK_SECRET configuration" });
+      return;
+    }
+
+    const rawBody = (req as RawBodyRequest).rawBody;
+    if (!rawBody) {
+      res.status(400).json({ error: "Missing raw request body" });
+      return;
+    }
+
+    const signature = req.header("x-hub-signature-256");
+    if (!verifyGitHubWebhookSignature(rawBody, signature, secret)) {
+      res.status(401).json({ error: "Invalid webhook signature" });
+      return;
+    }
+
+    const event = req.header("x-github-event") ?? "";
+    if (event === "ping") {
+      res.json({ ok: true, event: "ping" });
+      return;
+    }
+
+    if (event !== "push") {
+      res.json({ ok: true, ignored: true, reason: `Unsupported event '${event}'` });
+      return;
+    }
+
+    const payload = (req.body ?? {}) as GitHubPushPayload;
+    const targetBranch = process.env.GITHUB_BRANCH?.trim() || "main";
+    const expectedRef = `refs/heads/${targetBranch}`;
+    if (payload.ref && payload.ref !== expectedRef) {
+      res.json({ ok: true, ignored: true, reason: `Ignored ref '${payload.ref}'` });
+      return;
+    }
+
+    try {
+      const result = await syncGitHubPush({
+        payload,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        store: vaultStore,
+        fetchFile: fetchVaultFile,
+        now: getNow,
+      });
+
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sync GitHub push";
+      console.error("[/api/webhook/github] Error:", message);
+      res.status(502).json({ error: message });
+    }
   });
 
   return app;

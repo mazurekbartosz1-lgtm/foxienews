@@ -23,6 +23,7 @@ export interface WikiPageDoc {
   path: string;
   markdown: string;
   plainText: string;
+  summary?: string;
   tags: string[];
   updatedAt: string;
 }
@@ -47,5 +48,6 @@ export interface TaskDoc {
   sourceSlug?: string;
   dueDate?: string;
   priority?: string;
+  tags?: string[];
   updatedAt: string;
 }
