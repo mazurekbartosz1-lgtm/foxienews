@@ -37,6 +37,7 @@ export interface GitHubVaultClient {
     branch?: string;
   }): Promise<AtomicCommitResult>;
   createBranch(params: { branchName: string; fromBranch?: string }): Promise<string>;
+  findOpenPullRequest(headBranch: string): Promise<PullRequestResult | null>;
   createPullRequest(params: {
     title: string;
     body: string;
@@ -223,6 +224,23 @@ export function createGitHubVaultClient(): GitHubVaultClient {
         sha: headCommitSha,
       });
       return headCommitSha;
+    },
+
+    async findOpenPullRequest(headBranch: string): Promise<PullRequestResult | null> {
+      const res = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        state: "open",
+        head: `${owner}:${headBranch}`,
+        per_page: 5,
+      });
+      const first = res.data[0];
+      if (!first) return null;
+      return {
+        number: first.number,
+        url: first.html_url,
+        branch: headBranch,
+      };
     },
 
     async createPullRequest(params: {

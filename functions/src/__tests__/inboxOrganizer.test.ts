@@ -65,6 +65,9 @@ function createInMemoryGitHubVaultClient(initialFiles: Record<string, string>): 
     async createBranch({ branchName }) {
       return `branch-${branchName}`;
     },
+    async findOpenPullRequest() {
+      return null;
+    },
     async createPullRequest({ title, head }) {
       return {
         number: 1,

@@ -23,7 +23,11 @@ import {
   type ClassifyInboxNoteFn,
 } from "./services/inboxOrganizer.js";
 import { buildCaptureMarkdown, buildInboxPath } from "./services/markdown.js";
-import { normalizeSlug } from "./services/wikiParser.js";
+import {
+  runResearchAgent,
+  type GenerateResearchReportFn,
+} from "./services/researchAgent.js";
+import { normalizeSlug, parseFrontmatter } from "./services/wikiParser.js";
 import {
   extractNewInboxFilesFromPush,
   syncGitHubPush,
@@ -62,6 +66,8 @@ export interface AppDeps {
   vaultClient?: GitHubVaultClient;
   classifyInboxNote?: ClassifyInboxNoteFn;
   enableInboxOrganizer?: boolean;
+  generateResearchReport?: GenerateResearchReportFn;
+  enableResearchAgent?: boolean;
   now?: () => Date;
 }
 
@@ -343,6 +349,8 @@ export function createApp(deps: AppDeps = {}): express.Express {
               vaultClient: client,
               store: vaultStore,
               classifyNote: deps.classifyInboxNote,
+              generateResearchReport: deps.generateResearchReport,
+              enableResearchAgent: deps.enableResearchAgent,
               vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
               now: getNow,
             });
@@ -395,6 +403,8 @@ export function createApp(deps: AppDeps = {}): express.Express {
         vaultClient: client,
         store: vaultStore,
         classifyNote: deps.classifyInboxNote,
+        generateResearchReport: deps.generateResearchReport,
+        enableResearchAgent: deps.enableResearchAgent,
         vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
         paths,
         limit,
@@ -410,6 +420,88 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message =
         err instanceof Error ? err.message : "Failed to organize pending inbox files";
       console.error("[/api/agents/organize-inbox] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Faza 2: On-demand Research agent (Google Search grounding -> Pull Request)
+  app.post("/api/agents/research", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as {
+      title?: unknown;
+      text?: unknown;
+      wikiPath?: unknown;
+      tags?: unknown;
+      force?: unknown;
+    };
+
+    const wikiPath = typeof body.wikiPath === "string" ? body.wikiPath.trim() : "";
+    const rawText = typeof body.text === "string" ? body.text.trim() : "";
+    const titleHint = typeof body.title === "string" ? body.title.trim() : "";
+    const extraTags = Array.isArray(body.tags)
+      ? body.tags.filter((t): t is string => typeof t === "string")
+      : [];
+    const force = body.force === true;
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+
+      let noteMarkdown = rawText;
+      let topicTitle = titleHint;
+      let targetWikiPath: string | undefined;
+
+      if (wikiPath) {
+        const fetched = await client.fetchFile(wikiPath);
+        if (fetched === null) {
+          res.status(404).json({ error: `Wiki file not found: ${wikiPath}` });
+          return;
+        }
+        noteMarkdown = fetched;
+        targetWikiPath = wikiPath;
+        const { frontmatter, body: parsedBody } = parseFrontmatter(fetched);
+        const h1Match = parsedBody.match(/^\s*#\s+(.+)$/m);
+        topicTitle =
+          topicTitle || frontmatter.title || (h1Match ? h1Match[1].trim() : "") || wikiPath;
+      } else {
+        if (!noteMarkdown) {
+          res.status(400).json({ error: "Provide either non-empty 'text' or 'wikiPath'" });
+          return;
+        }
+        if (!topicTitle) {
+          const firstLine = noteMarkdown
+            .split("\n")
+            .map((l) => l.replace(/^#+\s*/, "").trim())
+            .find(Boolean);
+          topicTitle = (firstLine ?? "Research").slice(0, 80);
+        }
+      }
+
+      const result = await runResearchAgent({
+        topicTitle,
+        noteMarkdown,
+        sourcePath: targetWikiPath,
+        targetWikiPath,
+        extraTags,
+        vaultClient: client,
+        generateReport: deps.generateResearchReport,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        now: getNow,
+        force,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.status(result.status === "created" ? 201 : 200).json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run research agent";
+      console.error("[/api/agents/research] Error:", message);
       const status = message.startsWith("Missing ") ? 500 : 502;
       res.status(status).json({ error: message });
     }

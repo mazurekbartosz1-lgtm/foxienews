@@ -1,7 +1,7 @@
 ---
 title: Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)
 slug: projekty/foxie-notes/zadania/etap-2-agenci-chmurowi
-updated_at: 2026-11-26T16:50:00Z
+updated_at: 2026-11-26T18:40:00Z
 tags: [zadania, agenci, chmura, obsidian, foxie-notes]
 ---
 
@@ -53,9 +53,9 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Dodać testy jednostkowe / integracyjne (`npm --prefix functions test` -> `13/13`), wdrożyć funkcję `api` + `firestore:rules` i przeprocesować 8 istniejących notatek w `obsydianandwiki/raw/inbox/` (`8/8 processed`, zero błędów) #agenci #testy
 
 ### Faza 2 — Agent Researcher (Analiza -> Git Pull Request)
-- [ ] Zaimplementować `researchAgent` (Gemini z Google Search grounding generujący ustrukturyzowany raport + źródła + rekomendację kroków) #agenci #ai
-- [ ] Dodać automatyczne tworzenie gałęzi `agent/research-<slug>` i otwieranie Pull Requesta w `mazurekbartosz1-lgtm/obsydianandwiki` do review użytkownika #agenci #github
-- [ ] Dodać testy scenariusza `research-idea -> PR` i zweryfikować na żywej notatce ze spaceru #agenci #testy
+- [x] Zaimplementować `researchAgent` (Gemini `gemini-3.8-flash` z Google Search grounding `tools: [{ googleSearch: {} }]` generujący ustrukturyzowany raport + zweryfikowane źródła z `groundingMetadata` + checkboxy `- [ ]` + fallback bez narzędzia) i endpoint `POST /api/agents/research` #agenci #ai
+- [x] Dodać automatyczne tworzenie gałęzi `agent/research-<slug>` (z obsługą kolizji `422` i deduplikacją otwartych PR przez `findOpenPullRequest`) i otwieranie Pull Requesta w `mazurekbartosz1-lgtm/obsydianandwiki` po klasyfikacji `research-idea` #agenci #github
+- [x] Dodać testy scenariusza `research-idea -> PR` (`16/16` w `npm --prefix functions test`) i zweryfikować na żywo (`POST /api/api/capture` -> webhook -> Organizator -> `obsydianandwiki/pull/1`) #agenci #testy
 
 ### Faza 3 — Agent Planowania (Google Calendar + Google Tasks)
 - [ ] Skonfigurować OAuth2 (Calendar + Tasks scopes) i zapisać refresh token w Firebase Secret Manager (`functions/.secret.local` lokalnie) #agenci #sekrety

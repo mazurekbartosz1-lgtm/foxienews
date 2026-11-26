@@ -1,9 +1,10 @@
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
-import type { NoteIntent, OrganizeInboxResult } from "../types/api.js";
+import type { NoteIntent, OrganizeInboxResult, ResearchRunResult } from "../types/api.js";
 import type { VaultStore } from "./firestoreStore.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
 import { slugifyPolish } from "./markdown.js";
+import { runResearchAgent, type GenerateResearchReportFn } from "./researchAgent.js";
 import { parseFrontmatter } from "./wikiParser.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
 
@@ -748,6 +749,8 @@ export async function organizeInboxFile(params: {
   vaultClient: GitHubVaultClient;
   store: VaultStore;
   classifyNote?: ClassifyInboxNoteFn;
+  generateResearchReport?: GenerateResearchReportFn;
+  enableResearchAgent?: boolean;
   vaultPrefix?: string;
   now?: () => Date;
   force?: boolean;
@@ -917,6 +920,33 @@ export async function organizeInboxFile(params: {
       commitMessage: `agent(organizer): ${decision.title} (${decision.intent})`,
     });
 
+    let researchResult: ResearchRunResult | undefined;
+    if (decision.intent === "research-idea" && params.enableResearchAgent !== false) {
+      try {
+        researchResult = await runResearchAgent({
+          topicTitle: decision.title,
+          noteMarkdown: rawMarkdown,
+          sourcePath: processedRepoPath,
+          targetWikiPath: targetRelativePath,
+          extraTags: decision.tags,
+          vaultClient: params.vaultClient,
+          generateReport: params.generateResearchReport,
+          vaultPrefix: params.vaultPrefix,
+          now: getNow,
+          force: params.force,
+        });
+      } catch (researchErr) {
+        const researchMessage =
+          researchErr instanceof Error ? researchErr.message : String(researchErr);
+        console.error("[inboxOrganizer] Research agent error:", researchMessage);
+        researchResult = {
+          status: "error",
+          topicSlug: slugifyPolish(decision.title),
+          reason: researchMessage,
+        };
+      }
+    }
+
     await params.store.completeInboxJob({
       id: "",
       inboxPath: params.inboxRepoPath,
@@ -925,6 +955,12 @@ export async function organizeInboxFile(params: {
       intent: decision.intent,
       targetPath: targetRepoPath,
       commitSha: commitRes.commitSha,
+      ...(researchResult?.prUrl ? { researchPrUrl: researchResult.prUrl } : {}),
+      ...(researchResult?.prNumber !== undefined
+        ? { researchPrNumber: researchResult.prNumber }
+        : {}),
+      ...(researchResult?.branch ? { researchBranch: researchResult.branch } : {}),
+      ...(researchResult?.reportPath ? { researchReportPath: researchResult.reportPath } : {}),
       createdAt,
       updatedAt: nowIso,
     });
@@ -936,6 +972,7 @@ export async function organizeInboxFile(params: {
       targetPath: targetRepoPath,
       processedPath: processedRepoPath,
       commitSha: commitRes.commitSha,
+      ...(researchResult ? { research: researchResult } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -959,6 +996,8 @@ export async function organizePendingInboxFiles(params: {
   vaultClient: GitHubVaultClient;
   store: VaultStore;
   classifyNote?: ClassifyInboxNoteFn;
+  generateResearchReport?: GenerateResearchReportFn;
+  enableResearchAgent?: boolean;
   vaultPrefix?: string;
   paths?: string[];
   limit?: number;
@@ -1003,6 +1042,8 @@ export async function organizePendingInboxFiles(params: {
       vaultClient: params.vaultClient,
       store: params.store,
       classifyNote: params.classifyNote,
+      generateResearchReport: params.generateResearchReport,
+      enableResearchAgent: params.enableResearchAgent,
       vaultPrefix: params.vaultPrefix,
       now: params.now,
       force: params.force,

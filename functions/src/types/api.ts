@@ -70,9 +70,26 @@ export interface InboxJobDoc {
   intent?: NoteIntent;
   targetPath?: string;
   commitSha?: string;
+  researchPrUrl?: string;
+  researchPrNumber?: number;
+  researchBranch?: string;
+  researchReportPath?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ResearchRunResult {
+  status: "created" | "skipped" | "error";
+  topicSlug: string;
+  branch?: string;
+  reportPath?: string;
+  prNumber?: number;
+  prUrl?: string;
+  commitSha?: string;
+  sourcesCount?: number;
+  grounded?: boolean;
+  reason?: string;
 }
 
 export interface OrganizeInboxResult {
@@ -82,5 +99,6 @@ export interface OrganizeInboxResult {
   targetPath?: string;
   processedPath?: string;
   commitSha?: string;
+  research?: ResearchRunResult;
   reason?: string;
 }

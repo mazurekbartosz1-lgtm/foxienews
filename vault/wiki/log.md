@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T16:50:00Z
+updated_at: 2026-11-26T18:40:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-26
+- **Faza 2 chmurowych agentów zakończona — Agent Researcher (Google Search grounding -> Pull Request):**
+  - Zaimplementowano [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts) z wyszukiwaniem Google Search (`tools: [{ googleSearch: {} }]` na `gemini-3.8-flash` + fallback bez narzędzia), ekstrakcją źródeł z `groundingMetadata`, gałęziami `agent/research-<slug>` i otwieraniem bezkonfliktowych Pull Requestów w `obsydianandwiki` (`wiki/pomysly/<slug>/research.md`).
+  - Podpięto Researchera do [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) (auto-uruchamianie dla `intent === "research-idea"` z zapisem metadanych PR w `inbox_jobs`), rozszerzono [`github.ts`](../../../functions/src/services/github.ts) o `findOpenPullRequest` oraz dodano endpoint `POST /api/agents/research` w [`app.ts`](../../../functions/src/app.ts).
+  - Testy [`researchAgent.test.ts`](../../../functions/src/__tests__/researchAgent.test.ts) + całość `npm --prefix functions test`: `16/16` zaliczonych. Wdrożono `functions` do Firebase i zweryfikowano pełny żywy obieg E2E: `POST /api/api/capture` -> webhook `push` -> Organizator (`wiki/pomysly/bateria-lipo-obudowa-waveshare.md`) -> Researcher (`obsydianandwiki/pull/1` z rzeczywistymi źródłami Google Search grounding).
 - **Faza 1 chmurowych agentów zakończona — Agent Organizator, webhook `obsydianandwiki` i test E2E na 8 notatkach:**
   - Zatwierdzono taksonomię **PARA + Dziennik** (`projekty/`, `obszary/`, `pomysly/`, `zasoby/`, `dziennik/YYYY-MM-DD.md`) oraz przenoszenie przetworzonych oryginałów do `raw/processed/YYYY-MM/` w [`SCHEMA.md`](../../../vault/SCHEMA.md). Zabezpieczono [`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) przed nadpisywaniem zdalnych `wiki/index.md` i `wiki/log.md`.
   - Rozbudowano [`github.ts`](../../../functions/src/services/github.ts) o klienta Git Data API (`createGitHubVaultClient` z atomowymi commitami, tworzeniem gałęzi i PR-ów), dodano kolejkę idempotencji `inbox_jobs` w [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) oraz [`firestore.rules`](../../../firestore.rules), zaimplementowano [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) i podpięto wyzwalacz webhooka z ochroną anti-loop w [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts) + endpoint `POST /api/agents/organize-inbox` w [`app.ts`](../../../functions/src/app.ts).
