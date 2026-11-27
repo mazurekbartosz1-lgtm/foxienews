@@ -4,6 +4,10 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createApp } from "../app.js";
 import {
+  callGeminiWithFallback,
+  resolveGeminiModelChain,
+} from "../services/geminiRetry.js";
+import {
   buildCaptureMarkdown,
   buildInboxPath,
   slugifyPolish,
@@ -178,4 +182,79 @@ test("POST /api/capture enforces auth, validates input, and commits text + audio
     assert.match(committed[1].content, /type: voice-note/);
     assert.match(committed[1].content, /## Zadania\n- \[ \] Skonfigurować kodek ES8311/);
   });
+});
+
+test("resolveGeminiModelChain and callGeminiWithFallback fail over on 503/timeout and stop on non-retryable errors", async () => {
+  const prevPrimary = process.env.GEMINI_MODEL;
+  const prevFallbacks = process.env.GEMINI_FALLBACK_MODELS;
+  delete process.env.GEMINI_MODEL;
+  delete process.env.GEMINI_FALLBACK_MODELS;
+
+  try {
+    const chain = resolveGeminiModelChain();
+    assert.deepEqual(chain, [
+      "gemini-3.8-flash",
+      "gemini-3-flash-preview",
+      "gemini-3.5-flash-lite",
+      "gemini-flash-lite-latest",
+    ]);
+
+    // 1. Primary 503 -> falls back immediately to second model
+    const attempted: string[] = [];
+    const okRes = await callGeminiWithFallback({
+      models: chain,
+      logTag: "test-503",
+      runForModel: async (model) => {
+        attempted.push(model);
+        if (model === "gemini-3.8-flash") {
+          throw new Error('{"error":{"code":503,"status":"UNAVAILABLE","message":"high demand"}}');
+        }
+        return `ok-from-${model}`;
+      },
+    });
+    assert.equal(okRes.model, "gemini-3-flash-preview");
+    assert.equal(okRes.result, "ok-from-gemini-3-flash-preview");
+    assert.deepEqual(attempted, ["gemini-3.8-flash", "gemini-3-flash-preview"]);
+
+    // 2. Non-retryable 400 -> rethrows without calling fallbacks
+    const nonRetryAttempts: string[] = [];
+    await assert.rejects(
+      () =>
+        callGeminiWithFallback({
+          models: chain,
+          logTag: "test-400",
+          runForModel: async (model) => {
+            nonRetryAttempts.push(model);
+            const err = new Error("Bad request payload") as Error & { status?: number };
+            err.status = 400;
+            throw err;
+          },
+        }),
+      /Bad request payload/,
+    );
+    assert.deepEqual(nonRetryAttempts, ["gemini-3.8-flash"]);
+
+    // 3. Hung primary exceeding perAttemptTimeoutMs -> switches to backup model
+    const timeoutAttempts: string[] = [];
+    const timedOutFailover = await callGeminiWithFallback({
+      models: ["slow-primary", "fast-backup"],
+      perAttemptTimeoutMs: 40,
+      logTag: "test-timeout",
+      runForModel: async (model) => {
+        timeoutAttempts.push(model);
+        if (model === "slow-primary") {
+          return await new Promise<string>((resolve) => setTimeout(() => resolve("late"), 500));
+        }
+        return "fast-ok";
+      },
+    });
+    assert.equal(timedOutFailover.model, "fast-backup");
+    assert.equal(timedOutFailover.result, "fast-ok");
+    assert.deepEqual(timeoutAttempts, ["slow-primary", "fast-backup"]);
+  } finally {
+    if (prevPrimary === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = prevPrimary;
+    if (prevFallbacks === undefined) delete process.env.GEMINI_FALLBACK_MODELS;
+    else process.env.GEMINI_FALLBACK_MODELS = prevFallbacks;
+  }
 });

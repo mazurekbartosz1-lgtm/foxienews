@@ -1496,6 +1496,47 @@ static void syncOfflineQueueNow() {
   }
 }
 
+static void forceSyncAndRefresh() {
+  markUserActivity();
+  lastErrorText[0] = '\0';
+  lastQueueSyncAttemptMs = 0;
+  lastWifiReconnectAttemptMs = 0;
+  lastWeatherFetchMs = 0;
+  abortWifiConnectAsync();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (cfg.wifiSsid.isEmpty()) {
+      enterState(DeviceState::WifiSetup, false);
+      return;
+    }
+    currentState = DeviceState::WakingUp;
+    currentLedPattern = LedPattern::WifiPulse;
+    renderCurrentScreen(true);
+
+    if (!connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
+      prevWifiConnected = false;
+      uiWifiConnected = false;
+      snprintf(lastErrorText, sizeof(lastErrorText), "BRAK WI-FI");
+      enterState(DeviceState::Error, true);
+      return;
+    }
+    prevWifiConnected = true;
+    uiWifiConnected = true;
+    wifiLostAtMs = 0;
+  }
+
+  if (sdQueue.isMounted() && sdQueue.pendingCount() > 0 && isApiConfigured()) {
+    syncOfflineQueueNow();
+    return;
+  }
+
+  syncNtpTime(1500);
+  resolveCustomCityIfNeeded();
+  fetchWeatherOpenMeteo();
+  readyPartialCount = 0;
+  enterState(DeviceState::Ready, false);
+}
+
 static void onBootShortPress() {
   markUserActivity();
   Serial.println("[Foxie] BOOT short press");
@@ -1521,7 +1562,15 @@ static void onBootShortPress() {
 
 static void onBootLongPress() {
   markUserActivity();
-  Serial.println("[Foxie] BOOT long press ignored (Wi-Fi QR disabled from buttons)");
+  if (isSleeping) return;
+  if (currentState == DeviceState::Ready ||
+      currentState == DeviceState::Error ||
+      currentState == DeviceState::Saved) {
+    Serial.println("[Foxie] BOOT long press -> force sync & refresh");
+    forceSyncAndRefresh();
+  } else {
+    Serial.println("[Foxie] BOOT long press ignored in current state");
+  }
 }
 
 static void onPwrShortPress() {
@@ -1532,6 +1581,11 @@ static void onPwrShortPress() {
     audioRecorder.stopRecording(discarded);
     Serial.println("[Foxie] Recording cancelled by PWR");
     enterState(DeviceState::Ready, true);
+    return;
+  }
+  if (currentState == DeviceState::Error && sdQueue.isMounted() && sdQueue.pendingCount() > 0) {
+    Serial.println("[Foxie] PWR short press on Error -> retry SD sync now");
+    forceSyncAndRefresh();
     return;
   }
   if (currentState == DeviceState::WifiSetup) {
@@ -1869,6 +1923,11 @@ void loop() {
         }
       }
       markUserActivity();
+    } else if (ch == 'f' && !isSleeping &&
+               currentState != DeviceState::Recording &&
+               currentState != DeviceState::Uploading) {
+      Serial.println("[Diag] Triggering force sync & refresh...");
+      forceSyncAndRefresh();
     }
   }
 
@@ -1924,7 +1983,10 @@ void loop() {
       } else if (isTransientUploadError(res.httpStatus) && sdQueue.isMounted()) {
         String savedPath;
         if (sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), savedPath)) {
-          lastQueueSyncAttemptMs = 0;
+          uint32_t nowMs = millis();
+          lastQueueSyncAttemptMs = (nowMs > (QUEUE_SYNC_RETRY_MS - 15000))
+            ? (nowMs - (QUEUE_SYNC_RETRY_MS - 15000))
+            : 1;
           lastWifiReconnectAttemptMs = 0;
           savedToSdFlag = true;
           enterState(DeviceState::Saved, true);

@@ -299,24 +299,42 @@ export async function commitMarkdownToVault(params: {
   path: string;
   content: string;
   commitMessage: string;
+  maxRetries?: number;
 }): Promise<CommitVaultResult> {
   const { token, owner, repo, branch } = readGitHubEnv();
   const octokit = new Octokit({ auth: token });
   const encodedContent = Buffer.from(params.content, "utf8").toString("base64");
+  const maxRetries = params.maxRetries ?? 2;
 
-  const response = await octokit.rest.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    branch,
-    path: params.path,
-    message: params.commitMessage,
-    content: encodedContent,
-  });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await octokit.rest.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        branch,
+        path: params.path,
+        message: params.commitMessage,
+        content: encodedContent,
+      });
 
-  return {
-    path: response.data.content?.path ?? params.path,
-    commitSha: response.data.commit.sha ?? "",
-  };
+      return {
+        path: response.data.content?.path ?? params.path,
+        commitSha: response.data.commit.sha ?? "",
+      };
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      const isTransient =
+        status === undefined || status >= 500 || status === 409 || status === 422 || status === 429;
+      if (attempt < maxRetries && isTransient) {
+        const delayMs = 300 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error("Exhausted GitHub commit retries");
 }
 
 export async function fetchVaultFileFromGitHub(

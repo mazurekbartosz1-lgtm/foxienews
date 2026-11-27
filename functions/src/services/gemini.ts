@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 
 export interface ProcessedCapture {
   title: string;
@@ -50,30 +51,34 @@ export async function processAudioWithGemini(
     throw new Error("Missing GEMINI_API_KEY configuration");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [
-      {
-        role: "user",
-        parts: [
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "capture-audio",
+    perAttemptTimeoutMs: 22_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
+        model,
+        contents: [
           {
-            inlineData: {
-              mimeType,
-              data: audioBase64,
-            },
-          },
-          {
-            text: AUDIO_SYSTEM_PROMPT,
+            role: "user",
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: audioBase64,
+                },
+              },
+              {
+                text: AUDIO_SYSTEM_PROMPT,
+              },
+            ],
           },
         ],
-      },
-    ],
-    config: {
-      responseMimeType: "application/json",
-    },
+        config: {
+          responseMimeType: "application/json",
+        },
+      }),
   });
 
   const rawText = response.text?.trim() ?? "";

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { WeeklyReviewRunResult } from "../types/api.js";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
 import { updateWikiIndexMarkdown } from "./inboxOrganizer.js";
 import { extractTasksFromMarkdown, parseFrontmatter } from "./wikiParser.js";
@@ -133,7 +134,6 @@ export async function generateWeeklyReviewWithGemini(
     throw new Error("Missing GEMINI_API_KEY for WeeklyReviewAgent");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   const ai = new GoogleGenAI({ apiKey });
 
   const journalsText =
@@ -193,27 +193,19 @@ export async function generateWeeklyReviewWithGemini(
     "}",
   ].join("\n");
 
-  let response: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined;
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      response = await ai.models.generateContent({
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "weeklyReviewAgent",
+    perAttemptTimeoutMs: 30_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
         model,
         contents: prompt,
         config: {
           temperature: 0.25,
           responseMimeType: "application/json",
         },
-      });
-      break;
-    } catch (err) {
-      if (attempt < maxAttempts && isTransientGeminiError(err)) {
-        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
-        continue;
-      }
-      throw err;
-    }
-  }
+      }),
+  });
 
   const parsed = JSON.parse(stripCodeFences(response?.text ?? "{}")) as {
     summary?: unknown;

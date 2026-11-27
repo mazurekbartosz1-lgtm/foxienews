@@ -1,6 +1,7 @@
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import type { GardenerRunResult } from "../types/api.js";
+import { callGeminiWithFallback, isRetryableGeminiError } from "./geminiRetry.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
 import { updateWikiIndexMarkdown } from "./inboxOrganizer.js";
 import {
@@ -243,7 +244,6 @@ export async function buildGardenerPlanWithGemini(input: {
     throw new Error("Missing GEMINI_API_KEY for GardenerAgent");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   const ai = new GoogleGenAI({ apiKey });
 
   const pagesContext = input.pages
@@ -294,27 +294,19 @@ export async function buildGardenerPlanWithGemini(input: {
     "}",
   ].join("\n");
 
-  let response: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined;
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      response = await ai.models.generateContent({
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "gardenerAgent",
+    perAttemptTimeoutMs: 25_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
         model,
         contents: prompt,
         config: {
           temperature: 0.15,
           responseMimeType: "application/json",
         },
-      });
-      break;
-    } catch (err) {
-      if (attempt < maxAttempts && isTransientGeminiError(err)) {
-        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
-        continue;
-      }
-      throw err;
-    }
-  }
+      }),
+  });
 
   const parsed = JSON.parse(stripJsonFences(response?.text ?? "{}")) as {
     summary?: unknown;
@@ -452,7 +444,7 @@ export async function runGardenerAgent(params: {
           pages: editableContextPages,
         });
       } catch (planErr) {
-        if (isTransientGeminiError(planErr) && indexAudit.changed) {
+        if (isRetryableGeminiError(planErr) && indexAudit.changed) {
           console.warn(
             "[gardenerAgent] Gemini transient error; applying deterministic wiki/index.md repair only",
           );

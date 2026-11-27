@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { PlanningRunResult } from "../types/api.js";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 import type { GitHubVaultClient } from "./github.js";
 import type { GoogleWorkspaceClient } from "./googleWorkspace.js";
 
@@ -164,7 +165,6 @@ export async function enrichActionableContextWithGemini(params: {
     return { needed: false, factsMarkdown: "", sources: [] };
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Jesteś asystentem przygotowującym kompletne dane wykonawcze do zadań użytkownika (Foxie Notes).
@@ -186,12 +186,17 @@ ${params.noteMarkdown}
 \`\`\``;
 
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
+    const { result: response } = await callGeminiWithFallback({
+      logTag: "planningAgent-enrich",
+      perAttemptTimeoutMs: 22_000,
+      runForModel: (model) =>
+        ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        }),
     });
 
     const rawText = response.text?.trim() ?? "";
@@ -225,7 +230,6 @@ export async function extractPlanWithGemini(params: {
     throw new Error("Missing GEMINI_API_KEY configuration");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
   const nowDate = new Date(params.nowIso);
   const warsawContext = formatWarsawNowContext(
@@ -305,12 +309,17 @@ ZASADY KRYTYCZNE (KONSOLIDACJA I GOTOWOŚĆ DO WYKONANIA):
   ]
 }`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-    },
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "planningAgent-extract",
+    perAttemptTimeoutMs: 22_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+        },
+      }),
   });
 
   const rawText = response.text?.trim() ?? "";

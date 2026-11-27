@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { ResearchRunResult } from "../types/api.js";
+import { callGeminiWithFallback, isRetryableGeminiError } from "./geminiRetry.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
 import {
   type IndexSectionName,
@@ -227,7 +228,6 @@ export async function generateResearchReportWithGemini(params: {
     throw new Error("Missing GEMINI_API_KEY configuration");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Jesteś Agentem Researcherem prywatnej bazy wiedzy Obsidian (Foxie Notes).
@@ -262,28 +262,37 @@ Użyj dokładnie poniższych sekcji ## w tej kolejności:
 ## Następne kroki
 (3–5 konkretnych propozycji dalszych kroków w formacie zwykłych wypunktowań \`- ...\` — NIE używaj checkboxów \`- [ ]\`, żeby nie zaśmiecać głównej listy zadań użytkownika)`;
 
-  let response: Awaited<ReturnType<typeof ai.models.generateContent>>;
-  let grounded = true;
-
-  try {
-    response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[researchAgent] Google Search grounding failed (${message}); retrying without grounding tool.`,
-    );
-    grounded = false;
-    response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-    });
-  }
+  const {
+    result: { response, grounded },
+  } = await callGeminiWithFallback({
+    logTag: "researchAgent",
+    perAttemptTimeoutMs: 30_000,
+    runForModel: async (model) => {
+      try {
+        const res = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        });
+        return { response: res, grounded: true };
+      } catch (err) {
+        if (isRetryableGeminiError(err)) {
+          throw err;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[researchAgent] Google Search grounding failed (${message}); retrying without grounding tool.`,
+        );
+        const res = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+        });
+        return { response: res, grounded: false };
+      }
+    },
+  });
 
   const rawText = response.text?.trim() ?? "";
   if (!rawText) {

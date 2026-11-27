@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 import type {
   ClosedTaskRecord,
   TaskReconcilerRunResult,
@@ -281,7 +282,6 @@ export async function matchTasksWithEvidenceGemini(input: {
     throw new Error("Missing GEMINI_API_KEY for TaskReconciler");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   const ai = new GoogleGenAI({ apiKey });
 
   const tasksBlock = input.openTasks
@@ -320,27 +320,19 @@ export async function matchTasksWithEvidenceGemini(input: {
     "}",
   ].join("\n");
 
-  let response: Awaited<ReturnType<typeof ai.models.generateContent>> | undefined;
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      response = await ai.models.generateContent({
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "taskReconciler",
+    perAttemptTimeoutMs: 25_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
         model,
         contents: prompt,
         config: {
           temperature: 0.1,
           responseMimeType: "application/json",
         },
-      });
-      break;
-    } catch (err) {
-      if (attempt < maxAttempts && isTransientGeminiError(err)) {
-        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
-        continue;
-      }
-      throw err;
-    }
-  }
+      }),
+  });
 
   const parsed = JSON.parse(stripJsonFences(response?.text ?? "{}")) as {
     summary?: unknown;

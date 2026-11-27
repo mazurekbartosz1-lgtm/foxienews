@@ -1,5 +1,6 @@
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 import type {
   NoteIntent,
   OrganizeInboxResult,
@@ -290,7 +291,6 @@ export async function classifyInboxNoteWithGemini(params: {
     throw new Error("Missing GEMINI_API_KEY configuration");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const ai = new GoogleGenAI({ apiKey });
 
   const existingList =
@@ -354,12 +354,17 @@ REGUŁY DECYZJI:
   "isTestNote": false
 }`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-    },
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "inboxOrganizer",
+    perAttemptTimeoutMs: 25_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+        },
+      }),
   });
 
   const rawText = response.text?.trim() ?? "";

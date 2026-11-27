@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T12:55:00Z
+updated_at: 2026-11-27T13:55:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Eliminacja `502` na uploadzie z urządzenia (fallback modeli Gemini + retry GitHub) oraz Force Sync w firmware:**
+  - Zdiagnozowano przyczynę błędów `502` podczas `POST /api/capture`: `gemini-3.8-flash` zwracał `503 UNAVAILABLE (high demand)` przy szczycie obciążenia Google bez mechanizmu fallbacku na zdrowe modele.
+  - Dodano [`geminiRetry.ts`](../../../functions/src/services/geminiRetry.ts) z łańcuchem `gemini-3.8-flash` → `gemini-3-flash-preview` → `gemini-3.5-flash-lite` → `gemini-flash-lite-latest` i szybkim timeoutem `22–30 s`, podpięto go do [`gemini.ts`](../../../functions/src/services/gemini.ts) oraz wszystkich agentów chmurowych, a w [`github.ts`](../../../functions/src/services/github.ts) dodano retry dla `commitMarkdownToVault` (`37/37` testów pass).
+  - W [`main.cpp`](../../../firmware/src/main.cpp) dodano `forceSyncAndRefresh()`: długie przytrzymanie `BOOT` (`~2.5 s`) w `Ready`/`Saved`/`Error` wymusza natychmiastowe połączenie Wi-Fi + synchronizację kolejki SD (lub odświeżenie czasu/pogody), a krótkie `PWR` na ekranie `Error` natychmiast ponawia wysyłkę kolejki SD.
 - **Autonomiczny Agent Zamykacz Zadań (`taskReconciler`) — samoczynne zamykanie todo po akcjach, commitach i w Google Tasks:**
   - Utworzono [`taskReconciler.ts`](../../../functions/src/services/taskReconciler.ts) z 3 warstwami domykania zadań bez ingerencji użytkownika: (1) deterministyczną (istniejący `research.md`, duplikaty zadań ukończonych), (2) dwukierunkowym synciem ukończonych zadań z Google Tasks ([`googleWorkspace.ts`](../../../functions/src/services/googleWorkspace.ts) `listTasks`), oraz (3) dowodowym dopasowaniem LLM (`>= 0.85` confidence na podstawie `wiki/log.md`, `status.md`, `zadania/*` i dniówek, z twardą ochroną ścieżek systemowych i odciskiem zmian w `wiki_meta/reconciler_state`).
   - Podpięto automatyczne domykanie w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) (`completedTaskRefs` dla notatek głosowych/webowych, także cross-file w tym samym commicie), w webhooku GitHub po commitach `docs(vault):` ([`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) + [`app.ts`](../../../functions/src/app.ts), z ochroną anti-loop `agent(reconciler):`), w harmonogramie [`taskReconciler`](../../../functions/src/index.ts) (`every 60 minutes`), w [`vaultCommandAgent.ts`](../../../functions/src/services/vaultCommandAgent.ts) oraz jako endpoint `POST /api/agents/reconcile-tasks` + przycisk **Porządkuj zadania** w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`36/36` testów pass, `web` build OK).

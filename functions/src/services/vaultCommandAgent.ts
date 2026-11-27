@@ -1,5 +1,6 @@
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
+import { callGeminiWithFallback } from "./geminiRetry.js";
 import type { VaultCommandRunResult } from "../types/api.js";
 import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
 import {
@@ -287,7 +288,6 @@ export async function selectRelevantFilesWithGemini(
     throw new Error("Missing GEMINI_API_KEY for VaultCommandAgent");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   const ai = new GoogleGenAI({ apiKey });
   const cappedPaths = input.availablePaths.slice(0, 150);
   const prompt = [
@@ -307,13 +307,18 @@ export async function selectRelevantFilesWithGemini(
     'Zwróć WYŁĄCZNIE poprawny obiekt JSON: { "paths": ["..."] }',
   ].join("\n");
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      temperature: 0.1,
-      responseMimeType: "application/json",
-    },
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "vaultCommand-select",
+    perAttemptTimeoutMs: 22_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      }),
   });
 
   const parsed = JSON.parse(stripJsonFences(response.text ?? "{}")) as {
@@ -341,7 +346,6 @@ export async function buildVaultCommandPlanWithGemini(
     throw new Error("Missing GEMINI_API_KEY for VaultCommandAgent");
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   const ai = new GoogleGenAI({ apiKey });
   const filesContext =
     input.contextFiles.length > 0
@@ -396,13 +400,18 @@ export async function buildVaultCommandPlanWithGemini(
     "}",
   ].join("\n");
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-    },
+  const { result: response } = await callGeminiWithFallback({
+    logTag: "vaultCommand-plan",
+    perAttemptTimeoutMs: 25_000,
+    runForModel: (model) =>
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      }),
   });
 
   const parsed = JSON.parse(stripJsonFences(response.text ?? "{}")) as {
