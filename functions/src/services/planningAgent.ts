@@ -5,6 +5,23 @@ import type { GoogleWorkspaceClient } from "./googleWorkspace.js";
 
 export const CALENDAR_CONFIDENCE_THRESHOLD = 0.75;
 
+export interface ActionableEnrichmentSource {
+  title: string;
+  uri: string;
+}
+
+export interface ActionableEnrichment {
+  needed: boolean;
+  factsMarkdown: string;
+  sources: ActionableEnrichmentSource[];
+}
+
+export type EnrichActionableContextFn = (params: {
+  topicTitle: string;
+  noteMarkdown: string;
+  nowIso: string;
+}) => Promise<ActionableEnrichment>;
+
 export interface PlannedCalendarEvent {
   summary: string;
   description?: string;
@@ -39,6 +56,7 @@ export type ExtractPlanFn = (params: {
   noteMarkdown: string;
   nowIso: string;
   existingListNames: string[];
+  enrichment?: ActionableEnrichment;
 }) => Promise<PlanningDecision>;
 
 function stripCodeFences(raw: string): string {
@@ -99,11 +117,100 @@ function normalizeEventTimes(ev: PlannedCalendarEvent): {
   let endIso = ev.endIso?.trim() ?? "";
   const parsedEnd = endIso ? Date.parse(endIso) : Number.NaN;
   if (Number.isNaN(parsedEnd) || parsedEnd <= parsedStart) {
-    // Keep original offset when present or build UTC+60m ISO
     endIso = new Date(parsedStart + 60 * 60 * 1000).toISOString();
   }
 
   return { startIso: rawStart, endIso, allDay: false };
+}
+
+function extractGroundingSources(response: unknown): ActionableEnrichmentSource[] {
+  const candidates = (
+    response as {
+      candidates?: Array<{
+        groundingMetadata?: {
+          groundingChunks?: Array<{
+            web?: { uri?: string; title?: string };
+          }>;
+        };
+      }>;
+    }
+  )?.candidates;
+
+  const metadata = candidates?.[0]?.groundingMetadata;
+  const seenUris = new Set<string>();
+  const sources: ActionableEnrichmentSource[] = [];
+
+  for (const chunk of metadata?.groundingChunks ?? []) {
+    const uri = chunk?.web?.uri?.trim();
+    if (!uri || seenUris.has(uri)) continue;
+    seenUris.add(uri);
+    sources.push({
+      title: chunk?.web?.title?.trim() || uri,
+      uri,
+    });
+    if (sources.length >= 4) break;
+  }
+
+  return sources;
+}
+
+export async function enrichActionableContextWithGemini(params: {
+  topicTitle: string;
+  noteMarkdown: string;
+  nowIso: string;
+}): Promise<ActionableEnrichment> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    return { needed: false, factsMarkdown: "", sources: [] };
+  }
+
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `Jesteś asystentem przygotowującym kompletne dane wykonawcze do zadań użytkownika (Foxie Notes).
+Przeczytaj notatkę i sprawdź, czy do jej wykonania potrzebne są aktualne informacje z internetu (np. numer telefonu firmy/serwisu/urzędu, dokładny adres, godziny otwarcia w dniu ${params.nowIso.slice(0, 10)}, oficjalna strona WWW / link kontaktowy).
+
+Jeśli notatka NIE wymaga żadnych danych z internetu (np. "kupić mleko", "wynieść śmieci", "wysłać maila do Ani"), zwróć dokładnie jedno słowo:
+NO_LOOKUP_NEEDED
+
+Jeśli notatka wymaga znalezienia danych kontaktowych lub praktycznych, użyj Google Search i podaj TYLKO zwięzłe, sprawdzone fakty w punktach po polsku (bez wstępów i bez zadawania pytań):
+- Telefon: ...
+- Adres: ...
+- Godziny otwarcia: ...
+- Strona / źródło: ...
+
+TYTUŁ: ${params.topicTitle}
+TREŚĆ NOTATKI:
+\`\`\`markdown
+${params.noteMarkdown}
+\`\`\``;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const rawText = response.text?.trim() ?? "";
+    if (!rawText || /^NO_LOOKUP_NEEDED\b/i.test(rawText)) {
+      return { needed: false, factsMarkdown: "", sources: [] };
+    }
+
+    const sources = extractGroundingSources(response);
+    return {
+      needed: true,
+      factsMarkdown: rawText,
+      sources,
+    };
+  } catch (err) {
+    console.warn(
+      `[planningAgent] Actionable enrichment failed (${err instanceof Error ? err.message : String(err)}); continuing without enrichment.`,
+    );
+    return { needed: false, factsMarkdown: "", sources: [] };
+  }
 }
 
 export async function extractPlanWithGemini(params: {
@@ -111,6 +218,7 @@ export async function extractPlanWithGemini(params: {
   noteMarkdown: string;
   nowIso: string;
   existingListNames: string[];
+  enrichment?: ActionableEnrichment;
 }): Promise<PlanningDecision> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
@@ -129,47 +237,61 @@ export async function extractPlanWithGemini(params: {
       ? params.existingListNames.map((n) => `- ${n}`).join("\n")
       : "- Moje zadania (@default)";
 
+  const enrichmentBlock = params.enrichment?.needed
+    ? `\nZEBRANE AKTUALNE FAKTY Z GOOGLE SEARCH (użyj ich bezpośrednio w zadaniu i wydarzeniu!):\n${params.enrichment.factsMarkdown}\n${
+        params.enrichment.sources.length > 0
+          ? `Źródła walidacji:\n${params.enrichment.sources.map((s) => `- ${s.title}: ${s.uri}`).join("\n")}`
+          : ""
+      }\n`
+    : "";
+
   const prompt = `Jesteś Agentem Planowania prywatnego asystenta Foxie Notes.
-Przekształcasz notatkę użytkownika na konkretne wpisy w **Google Calendar**, **Google Tasks** oraz tematyczne **Google Listy** (np. "Lista zakupów", "Lista pakowania", "Do załatwienia - Auto").
+Przekształcasz notatkę użytkownika na skonsolidowane, gotowe do wykonania wpisy w **Google Calendar**, **Google Tasks** oraz tematyczne **Google Listy** (np. "Lista zakupów", "Lista pakowania").
 
 BIEŻĄCA DATA I CZAS (strefa Europe/Warsaw): ${warsawContext}
 
 ISTNIEJĄCE LISTY GOOGLE TASKS UŻYTKOWNIKA:
 ${listsInfo}
-
+${enrichmentBlock}
 TYTUŁ NOTATKI: ${params.topicTitle}
 TREŚĆ NOTATKI:
 \`\`\`markdown
 ${params.noteMarkdown}
 \`\`\`
 
-ZASADY:
-1. **calendarEvents**:
-   - Dodawaj TYLKO wtedy, gdy w notatce jest wyraźnie zaplanowane spotkanie, wizyta lub termin czasowy (np. "w środę o 12:00", "jutro o 9:30", "15 grudnia").
-   - Ustaw \`confidence\` (0.0–1.0): >= 0.80 gdy data/godzina lub konkretny dzień są jednoznaczne; <= 0.50 gdy to luźna myśl bez terminu.
-   - Format \`startIso\` / \`endIso\`: pełny ISO z offsetem lokalnym (np. \`2026-12-02T12:00:00+01:00\`) lub \`YYYY-MM-DD\` dla \`allDay: true\`. Jeśli brak czasu trwania, przyjmij 60 minut.
-2. **tasks**:
-   - Konkretne zadania do wykonania ("zadzwonić do Toyoty", "wysłać fakturę"), z opcjonalnym \`dueDate\` (\`YYYY-MM-DD\`) jeśli podano termin.
+ZASADY KRYTYCZNE (KONSOLIDACJA I GOTOWOŚĆ DO WYKONANIA):
+1. **JEDNO SKONSOLIDOWANE ZADANIE na sprawę:**
+   - NIGDY nie twórz osobnych meta-zadań typu "Znaleźć numer telefonu...", "Sprawdzić adres...", "Sprawdzić godziny otwarcia...".
+   - Użytkownik ma wyłącznie ZWALIDOWAĆ zebrane dane i WYKONAĆ czynność.
+   - Zamiast rozbijać na 2 zadania, utwórz **JEDNO** zadanie zawierające zebrany numer/adres w tytule lub bezpośrednio na początku \`notes\` (np. tytuł: \`"Zadzwonić do Toyota Carter Gdańsk o 15:00 — tel. +48 ..."\`, a w \`notes\`: numer telefonu, adres, godziny otwarcia i link do walidacji).
+   - Jeśli notatka zawiera prośbę typu "znajdź numer i przypomnij o 15:00 żeby zadzwonić", stwórz maksymalnie **1 wydarzenie** w \`calendarEvents\` (o 15:00, z adresem w \`location\` i numerem telefonu + źródłem w \`description\`) oraz **1 skonsolidowane zadanie** w \`tasks\` (bez osobnego zadania na szukanie numeru!).
+   - Jeśli dane z wyszukiwarki nie dają 100% pewności co do numeru/adresu, nadal utwórz JEDNO zadanie, a w \`notes\` dopisz: \`Uwaga: zweryfikuj numer w źródle przed wykonaniem.\`
+2. **calendarEvents**:
+   - Dodawaj TYLKO wtedy, gdy w notatce jest wyraźnie zaplanowane spotkanie, wizyta lub termin czasowy (np. "dzisiaj o 15:00", "w środę o 12:00", "jutro o 9:30").
+   - Ustaw \`confidence\` (0.0–1.0): >= 0.80 gdy data/godzina są jednoznaczne; <= 0.50 gdy to luźna myśl bez terminu.
+   - Format \`startIso\` / \`endIso\`: pełny ISO z offsetem lokalnym (np. \`2026-11-27T15:00:00+01:00\`) lub \`YYYY-MM-DD\` dla \`allDay: true\`. Jeśli brak czasu trwania, przyjmij 60 minut.
+3. **tasks**:
+   - Konkretne, gotowe do wykonania zadania, z opcjonalnym \`dueDate\` (\`YYYY-MM-DD\`).
    - \`listName\` opcjonalne (puste lub \`"@default"\` dla głównej listy zadań).
-3. **listItems**:
-   - Pozycje listowe (produkty na zakupy, lista rzeczy do spakowania, pozycje do odhaczenia na dedykowanej liście tematycznej), z konkretnym \`listName\` (np. \`"Lista zakupów"\` — reużywaj istniejącą nazwę listy jeśli pasuje!).
-4. Nie wymyślaj wydarzeń ani pozycji, których nie ma w notatce. Zwróć WYŁĄCZNIE poprawny JSON:
+4. **listItems**:
+   - Pozycje listowe (produkty na zakupy, lista rzeczy do spakowania), z konkretnym \`listName\` (np. \`"Lista zakupów"\` — reużywaj istniejącą nazwę listy jeśli pasuje!).
+5. Nie wymyślaj wydarzeń ani numerów, których nie ma w notatce ani w zebranych faktach. Zwróć WYŁĄCZNIE poprawny JSON:
 {
   "calendarEvents": [
     {
       "summary": "Krótki tytuł wydarzenia",
-      "description": "Opcjonalny opis",
-      "startIso": "2026-12-02T12:00:00+01:00",
-      "endIso": "2026-12-02T13:00:00+01:00",
+      "description": "Zebrane dane wykonawcze (telefon, godziny, kontekst, link)",
+      "startIso": "2026-11-27T15:00:00+01:00",
+      "endIso": "2026-11-27T16:00:00+01:00",
       "allDay": false,
-      "location": "Opcjonalne miejsce",
+      "location": "Pełny adres jeśli dostępny",
       "confidence": 0.9
     }
   ],
   "tasks": [
     {
-      "title": "Treść zadania",
-      "notes": "Opcjonalna notatka",
+      "title": "Skonsolidowane zadanie z kluczową daną (np. numerem telefonu)",
+      "notes": "Gotowy zestaw informacji: telefon, adres, godziny, link do walidacji",
       "dueDate": "YYYY-MM-DD",
       "listName": "@default"
     }
@@ -247,29 +369,94 @@ ZASADY:
   return { calendarEvents, tasks, listItems };
 }
 
-function appendGoogleSyncSection(params: {
+function appendEnrichmentFooter(
+  baseText: string,
+  enrichment: ActionableEnrichment | undefined,
+  sourcePath?: string,
+): string {
+  const parts: string[] = [];
+  if (baseText.trim()) {
+    parts.push(baseText.trim());
+  }
+  if (enrichment?.needed && enrichment.factsMarkdown.trim()) {
+    const alreadyHasDetails =
+      baseText.trim().length > 0 &&
+      enrichment.factsMarkdown
+        .split("\n")
+        .slice(0, 2)
+        .some((line) => line.length > 10 && baseText.includes(line.slice(0, 18)));
+    if (!alreadyHasDetails) {
+      parts.push(`Zebrane dane:\n${enrichment.factsMarkdown.trim()}`);
+    }
+  }
+  if (enrichment?.sources && enrichment.sources.length > 0) {
+    const missingSources = enrichment.sources.filter((s) => !baseText.includes(s.uri));
+    if (missingSources.length > 0) {
+      parts.push(
+        `Walidacja / źródła:\n${missingSources.map((s) => `- ${s.title}: ${s.uri}`).join("\n")}`,
+      );
+    }
+  }
+  if (sourcePath) {
+    parts.push(`Źródło Foxie Notes: ${sourcePath}`);
+  }
+  return parts.join("\n\n");
+}
+
+function mergeGoogleSyncSection(params: {
   existingMarkdown: string;
   updatedAtIso: string;
   result: PlanningRunResult;
 }): string {
-  const normalized = params.existingMarkdown.replace(/\r\n/g, "\n").trimEnd();
-  const lines: string[] = ["", "## Synchronizacja Google", `- Zsynchronizowano: ${params.updatedAtIso}`];
+  const normalized = params.existingMarkdown.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
 
+  const keptLines: string[] = [];
+  const existingSyncLines: string[] = [];
+  let inGoogleSync = false;
+
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) {
+      inGoogleSync = h2[1].trim().toLowerCase() === "synchronizacja google";
+      if (inGoogleSync) continue;
+    }
+    if (inGoogleSync) {
+      if (line.trim() !== "") {
+        existingSyncLines.push(line.trimEnd());
+      }
+    } else {
+      keptLines.push(line);
+    }
+  }
+
+  const newEntries: string[] = [];
+  if (params.result.enrichedFacts) {
+    newEntries.push(`- Zebrane dane (${params.updatedAtIso}):`);
+    for (const factLine of params.result.enrichedFacts.split("\n")) {
+      const clean = factLine.trim();
+      if (clean) {
+        newEntries.push(`  ${clean.startsWith("-") ? clean : `- ${clean}`}`);
+      }
+    }
+  }
   for (const ev of params.result.calendarEventsCreated) {
-    lines.push(
-      `- Kalendarz: **${ev.summary}** (${ev.start}, id: \`${ev.id}\`)${ev.htmlLink ? ` — [otwórz](${ev.htmlLink})` : ""}`,
+    newEntries.push(
+      `- Kalendarz (${params.updatedAtIso}): **${ev.summary}** (${ev.start}, id: \`${ev.id}\`)${ev.htmlLink ? ` — [otwórz](${ev.htmlLink})` : ""}`,
     );
   }
   for (const task of params.result.tasksCreated) {
-    lines.push(
+    newEntries.push(
       `- Google Tasks (${task.listName}): **${task.title}**${task.due ? ` (@due(${task.due}))` : ""} (id: \`${task.id}\`)`,
     );
   }
   for (const item of params.result.listItemsCreated) {
-    lines.push(`- Google Lista (${item.listName}): **${item.title}** (id: \`${item.id}\`)`);
+    newEntries.push(`- Google Lista (${item.listName}): **${item.title}** (id: \`${item.id}\`)`);
   }
 
-  return `${normalized}\n${lines.join("\n")}\n`;
+  const mergedSync = [...existingSyncLines, ...newEntries].join("\n").trim();
+  const baseBody = keptLines.join("\n").trimEnd();
+  return `${baseBody}\n\n## Synchronizacja Google\n${mergedSync}\n`;
 }
 
 export async function runPlanningAgent(params: {
@@ -280,6 +467,7 @@ export async function runPlanningAgent(params: {
   googleClient: GoogleWorkspaceClient;
   vaultClient?: GitHubVaultClient;
   extractPlan?: ExtractPlanFn;
+  enrichContext?: EnrichActionableContextFn;
   now?: () => Date;
 }): Promise<PlanningRunResult> {
   if (!params.googleClient.isConfigured()) {
@@ -296,6 +484,21 @@ export async function runPlanningAgent(params: {
   const nowIso = getNow().toISOString().replace(/\.\d{3}Z$/, "Z");
   const extractPlan = params.extractPlan ?? extractPlanWithGemini;
 
+  let enrichment: ActionableEnrichment = { needed: false, factsMarkdown: "", sources: [] };
+  if (params.enrichContext) {
+    enrichment = await params.enrichContext({
+      topicTitle: params.topicTitle,
+      noteMarkdown: params.noteMarkdown,
+      nowIso,
+    });
+  } else if (!params.extractPlan && process.env.GEMINI_API_KEY?.trim()) {
+    enrichment = await enrichActionableContextWithGemini({
+      topicTitle: params.topicTitle,
+      noteMarkdown: params.noteMarkdown,
+      nowIso,
+    });
+  }
+
   let existingListNames: string[] = [];
   try {
     const lists = await params.googleClient.listTaskLists();
@@ -309,6 +512,7 @@ export async function runPlanningAgent(params: {
     noteMarkdown: params.noteMarkdown,
     nowIso,
     existingListNames,
+    enrichment,
   });
 
   const calendarEventsCreated: PlanningRunResult["calendarEventsCreated"] = [];
@@ -327,11 +531,11 @@ export async function runPlanningAgent(params: {
       continue;
     }
 
-    const descriptionParts = [ev.description?.trim() ?? ""];
-    if (params.sourcePath) {
-      descriptionParts.push(`Źródło Foxie Notes: ${params.sourcePath}`);
-    }
-    const description = descriptionParts.filter(Boolean).join("\n\n");
+    const description = appendEnrichmentFooter(
+      ev.description ?? "",
+      enrichment,
+      params.sourcePath,
+    );
 
     const created = await params.googleClient.createCalendarEvent({
       summary: ev.summary,
@@ -368,14 +572,15 @@ export async function runPlanningAgent(params: {
 
   for (const task of decision.tasks) {
     const targetList = await resolveList(task.listName);
-    const notesParts = [task.notes?.trim() ?? ""];
-    if (params.sourcePath) {
-      notesParts.push(`Źródło: ${params.sourcePath}`);
-    }
+    const notes = appendEnrichmentFooter(
+      task.notes ?? "",
+      enrichment,
+      params.sourcePath,
+    );
     const created = await params.googleClient.createTask({
       listId: targetList.id,
       title: task.title,
-      notes: notesParts.filter(Boolean).join("\n"),
+      notes,
       dueDate: task.dueDate,
     });
     tasksCreated.push({
@@ -408,13 +613,17 @@ export async function runPlanningAgent(params: {
     calendarEventsCreated,
     tasksCreated,
     listItemsCreated,
+    ...(enrichment.needed && enrichment.factsMarkdown
+      ? { enrichedFacts: enrichment.factsMarkdown }
+      : {}),
+    ...(enrichment.sources.length > 0 ? { enrichmentSources: enrichment.sources } : {}),
     ...(skippedLowConfidenceEvents > 0 ? { skippedLowConfidenceEvents } : {}),
   };
 
   if (totalCreated > 0 && params.targetRepoPath && params.vaultClient) {
     const existingWiki = await params.vaultClient.fetchFile(params.targetRepoPath);
     if (existingWiki !== null) {
-      const updatedWiki = appendGoogleSyncSection({
+      const updatedWiki = mergeGoogleSyncSection({
         existingMarkdown: existingWiki,
         updatedAtIso: nowIso,
         result,

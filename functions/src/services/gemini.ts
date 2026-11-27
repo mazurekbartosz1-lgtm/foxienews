@@ -19,7 +19,7 @@ Zwróć WYŁĄCZNIE poprawny obiekt JSON (bez dodatkowego tekstu) o polach:
   "summary": "1 krótkie zdanie podsumowujące notatkę (max 140 znaków, czytelne na małym e-inku)",
   "body": "Uporządkowana, zwięzła treść notatki w Markdown (akapity lub krótkie punkty, bez sekcji Zadania)",
   "tags": ["1-4 krótkie tagi bez # i bez spacji, np. pomysl, sprzet"],
-  "tasks": ["konkretne zadania do wykonania wyciągnięte z nagrania (bez prefiksu '- [ ]'); jeśli padł konkretny termin, dopisz na końcu zadania @due(YYYY-MM-DD); pusta tablica jeśli brak"]
+  "tasks": ["konkretne zadania do wykonania wyciągnięte z nagrania (bez prefiksu '- [ ]'); konsoliduj ściśle powiązane kroki jednej sprawy w JEDNO konkretne zadanie (np. zamiast osobno 'Znaleźć numer do X' i 'Zadzwonić do X o 15:00', utwórz jedno zadanie 'Zadzwonić do X o 15:00 (znaleźć numer telefonu)'); rozdzielaj wyłącznie niezależne sprawy; jeśli padł konkretny termin, dopisz na końcu zadania @due(YYYY-MM-DD); pusta tablica jeśli brak"]
 }`;
 
 function stripCodeFences(raw: string): string {

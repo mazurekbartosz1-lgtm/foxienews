@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T06:55:00Z
+updated_at: 2026-11-27T07:25:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Konsolidacja zadań i automatyczne wzbogacanie faktami (Google Search grounding) w Agencie Planowania:**
+  - Dodano `enrichActionableContextWithGemini` w [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts) (wyszukuje numery telefonów, adresy, godziny i linki walidacyjne przed utworzeniem zadania), zaktualizowano prompty w [`gemini.ts`](../../../functions/src/services/gemini.ts), [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) i [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts), aby scalać powiązane kroki w **jedno** gotowe do wykonania zadanie zamiast rozbitych meta-zadań.
+  - Poprawiono scalanie sekcji `## Synchronizacja Google` w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) oraz [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts) (brak duplikatów nagłówka). Testy `npm --prefix functions test`: `19/19`.
 - **Etap 2B zakończony — Aplikacja webowa (`web/`) w stylu *yourmoments*, gotowa na Vercel:**
   - Zbudowano aplikację React + Vite + Tailwind v4 w [`web/`](../../../web/src/App.tsx) z papierowym motywem (`#F7F5F0`, `Lora`, `JetBrains Mono`), ekranem logowania Google ([`LoginPage.tsx`](../../../web/src/components/LoginPage.tsx) + [`firebase.ts`](../../../web/src/lib/firebase.ts)) z blokadą konta poza `ALLOWED_USER_EMAIL`, widokami **Do zrobienia** ([`TasksView.tsx`](../../../web/src/components/TasksView.tsx) + `POST /api/capture`), **Wiki** ([`WikiView.tsx`](../../../web/src/components/WikiView.tsx) + klikalne `[[wikilinks]]` w [`markdown.tsx`](../../../web/src/lib/markdown.tsx)) i **Agenci** ([`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx)) oraz konfiguracją Vercel ([`vercel.json`](../../../vercel.json), [`web/vercel.json`](../../../web/vercel.json)).
 - **Faza 3 chmurowych agentów zakończona — Google OAuth2 + żywy test E2E (Calendar + Tasks + Listy):**

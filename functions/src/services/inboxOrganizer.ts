@@ -13,7 +13,11 @@ import {
   type GoogleWorkspaceClient,
 } from "./googleWorkspace.js";
 import { slugifyPolish } from "./markdown.js";
-import { runPlanningAgent, type ExtractPlanFn } from "./planningAgent.js";
+import {
+  runPlanningAgent,
+  type EnrichActionableContextFn,
+  type ExtractPlanFn,
+} from "./planningAgent.js";
 import { runResearchAgent, type GenerateResearchReportFn } from "./researchAgent.js";
 import { parseFrontmatter } from "./wikiParser.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
@@ -278,7 +282,7 @@ REGUŁY DECYZJI:
    - \`wiki/dziennik/${params.noteDate}.md\` (obserwacje dnia, samopoczucie, krótkie zapiski dnia ORAZ nagrania testowe)
 2. Jeśli notatka jest testem dyktafonu, konfiguracji lub spacerowym testem nagrania, ustaw \`isTestNote: true\`, \`intent: "journal"\`, \`targetPath: "wiki/dziennik/${params.noteDate}.md"\` i dodaj tag \`test\`.
 3. Nigdy nie wybieraj chronionych plików: \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/projekty/foxie-notes/status.md\`, \`wiki/projekty/foxie-notes/index.md\`.
-4. Zachowaj wszystkie konkretne fakty, godziny, kwoty, nazwy i zadania (z \`@due(YYYY-MM-DD)\` jeśli padła konkretna data).
+4. Zachowaj wszystkie konkretne fakty, godziny, kwoty, nazwy i zadania (z \`@due(YYYY-MM-DD)\` jeśli padła konkretna data). Konsoliduj powiązane kroki jednej sprawy w JEDNO konkretne zadanie — nie rozbijaj pojedynczej czynności na osobne meta-zadanie typu "znaleźć numer/sprawdzić adres" i właściwe wykonanie.
 5. \`contentMarkdown\` nie może zawierać YAML frontmattera ani nagłówka H1 (\`# ...\`) ani sekcji \`## Zadania\` (zadania podaj wyłącznie w polu \`tasks\`).
 6. Zwróć WYŁĄCZNIE poprawny obiekt JSON o polach:
 {
@@ -549,8 +553,15 @@ export function mergeIntoExistingWikiPage(params: {
   let sourcesSection = sections.find(
     (s) => s.heading.toLowerCase() === "źródła" || s.heading.toLowerCase() === "zrodla",
   );
+  const googleSyncSections = sections.filter(
+    (s) => s.heading.toLowerCase() === "synchronizacja google",
+  );
+  const googleSyncContent = googleSyncSections
+    .map((s) => s.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
   const regularSections = sections.filter(
-    (s) => s !== tasksSection && s !== sourcesSection,
+    (s) => s !== tasksSection && s !== sourcesSection && !googleSyncSections.includes(s),
   );
 
   const newBlock = formatSectionBlock({
@@ -626,6 +637,10 @@ export function mergeIntoExistingWikiPage(params: {
   }
 
   out.push(`## ${sourcesSection.heading}`, sourcesSection.content, "");
+
+  if (googleSyncContent) {
+    out.push("## Synchronizacja Google", googleSyncContent, "");
+  }
 
   return out.join("\n");
 }
@@ -763,6 +778,7 @@ export async function organizeInboxFile(params: {
   enableResearchAgent?: boolean;
   googleClient?: GoogleWorkspaceClient;
   extractPlan?: ExtractPlanFn;
+  enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
   vaultPrefix?: string;
   now?: () => Date;
@@ -976,6 +992,7 @@ export async function organizeInboxFile(params: {
             googleClient: gClient,
             vaultClient: params.vaultClient,
             extractPlan: params.extractPlan,
+            enrichContext: params.enrichContext,
             now: getNow,
           });
         } catch (planErr) {
@@ -1064,6 +1081,7 @@ export async function organizePendingInboxFiles(params: {
   enableResearchAgent?: boolean;
   googleClient?: GoogleWorkspaceClient;
   extractPlan?: ExtractPlanFn;
+  enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
   vaultPrefix?: string;
   paths?: string[];

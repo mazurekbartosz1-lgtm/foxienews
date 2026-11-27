@@ -115,6 +115,8 @@ export interface PlanningRunResult {
     title: string;
     listName: string;
   }>;
+  enrichedFacts?: string;
+  enrichmentSources?: Array<{ title: string; uri: string }>;
   skippedLowConfidenceEvents?: number;
   commitSha?: string;
   reason?: string;

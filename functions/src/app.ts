@@ -29,6 +29,7 @@ import {
 import { buildCaptureMarkdown, buildInboxPath } from "./services/markdown.js";
 import {
   runPlanningAgent,
+  type EnrichActionableContextFn,
   type ExtractPlanFn,
 } from "./services/planningAgent.js";
 import {
@@ -78,6 +79,7 @@ export interface AppDeps {
   enableResearchAgent?: boolean;
   googleClient?: GoogleWorkspaceClient;
   extractPlan?: ExtractPlanFn;
+  enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
   now?: () => Date;
 }
@@ -588,6 +590,7 @@ export function createApp(deps: AppDeps = {}): express.Express {
         googleClient,
         vaultClient: client,
         extractPlan: deps.extractPlan,
+        enrichContext: deps.enrichContext,
         now: getNow,
       });
 

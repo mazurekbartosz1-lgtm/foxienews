@@ -21,8 +21,21 @@ function createPlanningMockClients(initialFiles: Record<string, string>) {
   const taskLists: Array<{ id: string; title: string }> = [
     { id: "@default", title: "Moje zadania" },
   ];
-  const createdTasks: Array<{ listId: string; id: string; title: string; dueDate?: string }> = [];
-  const createdEvents: Array<{ id: string; summary: string; startIso: string; endIso: string }> = [];
+  const createdTasks: Array<{
+    listId: string;
+    id: string;
+    title: string;
+    notes?: string;
+    dueDate?: string;
+  }> = [];
+  const createdEvents: Array<{
+    id: string;
+    summary: string;
+    description?: string;
+    location?: string;
+    startIso: string;
+    endIso: string;
+  }> = [];
   let seq = 1;
 
   const vaultClient: GitHubVaultClient = {
@@ -75,6 +88,7 @@ function createPlanningMockClients(initialFiles: Record<string, string>) {
         listId: params.listId,
         id,
         title: params.title,
+        notes: params.notes,
         dueDate: params.dueDate,
       });
       return { id, title: params.title };
@@ -84,6 +98,8 @@ function createPlanningMockClients(initialFiles: Record<string, string>) {
       createdEvents.push({
         id,
         summary: params.summary,
+        description: params.description,
+        location: params.location,
         startIso: params.startIso,
         endIso: params.endIso,
       });
@@ -290,3 +306,74 @@ test("Webhook plan-calendar -> Organizer -> Planning agent creates Calendar even
     );
   }
 });
+
+test("runPlanningAgent enriches facts, consolidates into 1 actionable task + 1 event, and avoids duplicate ## Synchronizacja Google headers", async () => {
+  const mock = createPlanningMockClients({
+    "wiki/obszary/auto/toyota.md": [
+      "---",
+      'title: "Toyota — Serwis"',
+      "slug: obszary/auto/toyota",
+      "---",
+      "",
+      "# Toyota — Serwis",
+      "",
+      "## Synchronizacja Google",
+      "- Google Tasks (Moje zadania): **Stary wpis** (id: `old-1`)",
+      "",
+    ].join("\n"),
+  });
+
+  const result = await runPlanningAgent({
+    topicTitle: "Telefon do Toyota Carter Gdańsk",
+    noteMarkdown:
+      "Znaleźć numer telefonu do Toyota Carter Gdańsk na Grunwaldzkiej i przypomnieć o 15:00 żeby zadzwonić.",
+    sourcePath: "raw/processed/2026-11/2026-11-27-toyota.md",
+    targetRepoPath: "wiki/obszary/auto/toyota.md",
+    googleClient: mock.googleClient,
+    vaultClient: mock.vaultClient,
+    now: () => new Date("2026-11-27T07:15:00Z"),
+    enrichContext: async () => ({
+      needed: true,
+      factsMarkdown: "- Telefon: +48 58 340 99 00\n- Adres: al. Grunwaldzka 260, 80-314 Gdańsk",
+      sources: [
+        { title: "Toyota Carter Gdańsk", uri: "https://www.toyotacarter.pl/kontakt" },
+      ],
+    }),
+    extractPlan: async ({ enrichment }) => {
+      assert.equal(enrichment?.needed, true);
+      assert.match(enrichment?.factsMarkdown ?? "", /\+48 58 340 99 00/);
+      return {
+        calendarEvents: [
+          {
+            summary: "Telefon do Toyota Carter Gdańsk",
+            description: "Tel: +48 58 340 99 00",
+            location: "al. Grunwaldzka 260, 80-314 Gdańsk",
+            startIso: "2026-11-27T15:00:00+01:00",
+            confidence: 0.95,
+          },
+        ],
+        tasks: [
+          {
+            title: "Zadzwonić do Toyota Carter Gdańsk o 15:00 — tel. +48 58 340 99 00",
+            notes: "Adres: al. Grunwaldzka 260, Gdańsk",
+            dueDate: "2026-11-27",
+          },
+        ],
+        listItems: [],
+      };
+    },
+  });
+
+  assert.equal(result.status, "synced");
+  assert.equal(result.tasksCreated.length, 1);
+  assert.equal(result.calendarEventsCreated.length, 1);
+  assert.match(mock.createdTasks[0].notes ?? "", /\+48 58 340 99 00/);
+  assert.match(mock.createdTasks[0].notes ?? "", /toyotacarter\.pl\/kontakt/);
+  assert.equal(mock.createdEvents[0].location, "al. Grunwaldzka 260, 80-314 Gdańsk");
+
+  const updatedWiki = mock.files.get("wiki/obszary/auto/toyota.md") ?? "";
+  assert.equal((updatedWiki.match(/## Synchronizacja Google/g) ?? []).length, 1);
+  assert.match(updatedWiki, /\*\*Stary wpis\*\*/);
+  assert.match(updatedWiki, /\+48 58 340 99 00/);
+});
+
