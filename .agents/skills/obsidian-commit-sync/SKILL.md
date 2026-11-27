@@ -35,12 +35,13 @@ Run these steps **before** running `git commit`:
 
 ## Procedure B: Resume in a New Context Window
 
-Triggered automatically at the start of any new conversation or when the user says `"kontynuujmy zadanie"`, `"kontynuuj"`, `"jedziemy dalej"`, or `"co dalej"`:
+Triggered automatically at the start of any new conversation or when the user says `"kontynuujmy zadanie"`, `"kontynuuj"`, `"jedziemy dalej"`, `"co dalej"`, `"gdzie jesteśmy"`, `"co możemy teraz zrobić"`, `"przegląd"`, or `"podsumowanie"`:
 
 1. Read `vault/wiki/projekty/foxie-notes/status.md` completely first.
-2. Read the #1 active task checklist linked under **Następny krok (Next Action)** / **Pliki startowe do wczytania w nowym oknie** (e.g. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md`).
+2. Read the #1 active task checklist linked under **Następny krok (Next Action)** / **Pliki startowe do wczytania w nowym oknie** (e.g. `vault/wiki/projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc.md`).
 3. Skim the top section of `vault/wiki/log.md` for recent commits and architectural decisions.
-4. Confirm git state with `git status --short` and `git log --oneline -n 5`, then begin directly from the first unchecked `- [ ]` item in the active checklist without asking the user to re-explain project history.
+4. Run `npm run vault:overview` (`BypassSandbox: true` if network is sandboxed) to inspect the live remote `obsydianandwiki` repository (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/`, `wiki/zasoby/`, and index integrity).
+5. Confirm git state with `git status --short` and `git log --oneline -n 5`, then either begin directly from the first unchecked `- [ ]` item in the active checklist or present Procedure D if the user asked for a status/backlog review.
 
 ## Procedure C: Prepare Session Handoff (New Window / Any Machine)
 
@@ -51,3 +52,13 @@ Run when ending a milestone, switching tasks, or preparing to resume in a fresh 
 3. Add a timestamped handoff note at the top of today's section in `vault/wiki/log.md`.
 4. Run `npm run sync:vault` so the private Obsidian repository (`obsydianandwiki`) matches `vault/SCHEMA.md` and `vault/wiki/**`.
 5. Run the Security Gate (`git check-ignore -v firmware/include/config.h functions/.env functions/.secret.local .firebaserc` + `git status --short`), commit all `vault/` updates in `foxienews`, and `git push origin main` so any fresh window or machine can resume immediately on `"kontynuujmy zadanie"`.
+
+## Procedure D: Vault Overview & Backlog Triage
+
+Run whenever the user asks for status, backlog review, or next steps (`"gdzie jesteśmy"`, `"co możemy teraz zrobić"`, `"przegląd"`, `"podsumowanie"`, `"co dalej"`):
+
+1. Combine local `status.md` / `zadania/*.md` with live `npm run vault:overview` output (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/`).
+2. Structure the response into 3 concise sections:
+   - **Gdzie jesteśmy** — verified code state + full live vault snapshot (flagging any non-empty `raw/inbox/` or index gaps).
+   - **Quick Wins (szybkie zmiany na start)** — small, low-risk tasks to clear the backlog first.
+   - **Ocena i rekomendowany ciąg pracy** — effort vs value table and concrete next-step recommendation.

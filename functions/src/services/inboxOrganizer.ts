@@ -7,7 +7,11 @@ import type {
   ResearchRunResult,
 } from "../types/api.js";
 import type { VaultStore } from "./firestoreStore.js";
-import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
+import {
+  isGitConflictError,
+  type AtomicFileChange,
+  type GitHubVaultClient,
+} from "./github.js";
 import {
   createGoogleWorkspaceClient,
   type GoogleWorkspaceClient,
@@ -90,7 +94,15 @@ const PROTECTED_WIKI_PATHS = new Set([
   "wiki/log.md",
   "wiki/projekty/foxie-notes/status.md",
   "wiki/projekty/foxie-notes/index.md",
+  "wiki/projekty/foxie-notes/sprzet-waveshare-v2.md",
 ]);
+
+function isProtectedFoxieProjectDoc(rebuilt: string): boolean {
+  return (
+    PROTECTED_WIKI_PATHS.has(rebuilt) ||
+    rebuilt.startsWith("wiki/projekty/foxie-notes/zadania/")
+  );
+}
 
 function joinRepoPath(vaultPrefix: string | undefined, relativePath: string): string {
   const cleanPrefix = (vaultPrefix ?? "").trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -217,8 +229,16 @@ export function sanitizeTargetPath(params: {
     return slugifyPolish(seg);
   });
 
+  if (
+    cleanSegments[1] === "projekty" &&
+    cleanSegments.length >= 3 &&
+    ["foxy-news", "foxing-news", "foxie-news"].includes(cleanSegments[2])
+  ) {
+    cleanSegments[2] = "foxie-notes";
+  }
+
   const rebuilt = cleanSegments.join("/");
-  if (PROTECTED_WIKI_PATHS.has(rebuilt)) {
+  if (isProtectedFoxieProjectDoc(rebuilt)) {
     if (rebuilt.startsWith("wiki/projekty/foxie-notes/")) {
       return "wiki/projekty/foxie-notes/notatki.md";
     }
@@ -281,14 +301,14 @@ ${params.rawMarkdown}
 
 REGUŁY DECYZJI:
 1. Dobierz dokładnie jedną ścieżkę \`targetPath\` zaczynającą się od:
-   - \`wiki/projekty/<projekt>/<temat>.md\` (dla aktywnych projektów, np. \`foxie-notes/notatki.md\`)
+   - \`wiki/projekty/<projekt>/<temat>.md\` (dla aktywnych projektów; wszystkie notatki dotyczące projektu Foxie Notes — w tym literówki z transkrypcji głosowej typu "Foxy News", "Foxing News", "Foxie News" — MUSZĄ trafiać do \`wiki/projekty/foxie-notes/notatki.md\`, nigdy nie twórz osobnych katalogów \`foxing-news/\` ani \`foxy-news/\`)
    - \`wiki/obszary/<obszar>/<temat>.md\` (stałe obszary życia, np. \`wiki/obszary/dom/zakupy.md\`, \`wiki/obszary/auto/toyota.md\`, \`wiki/obszary/zdrowie/samopoczucie.md\`)
    - \`wiki/pomysly/<temat>.md\` (nowe pomysły i koncepcje do analizy -> intent \`research-idea\`)
    - \`wiki/zasoby/<temat>.md\` (wiedza ogólna, notatki referencyjne)
    - \`wiki/dziennik/${params.noteDate}.md\` (obserwacje dnia, samopoczucie, krótkie zapiski dnia ORAZ nagrania testowe)
 2. Jeśli notatka jest testem dyktafonu, konfiguracji lub spacerowym testem nagrania, ustaw \`isTestNote: true\`, \`intent: "journal"\`, \`targetPath: "wiki/dziennik/${params.noteDate}.md"\` i dodaj tag \`test\`.
    Jeśli notatka jest wyraźnym poleceniem zmiany struktury lub porządkowania repozytorium Obsidian / folderów / stron wiki (np. "zrób folder zdrowie i samopoczucie", "uporządkuj notatki o X jako oddzielne wiki", "przenieś wpisy o Y do Z"), ustaw \`intent: "vault-command"\`, \`targetPath: "wiki/dziennik/${params.noteDate}.md"\` (zostanie obsłużone bezpośrednio przez Kuratora Wiki bez dopisywania śmieciowego wpisu do dziennika).
-3. Nigdy nie wybieraj chronionych plików: \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/projekty/foxie-notes/status.md\`, \`wiki/projekty/foxie-notes/index.md\`.
+3. Nigdy nie wybieraj chronionych plików: \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/projekty/foxie-notes/status.md\`, \`wiki/projekty/foxie-notes/index.md\`, \`wiki/projekty/foxie-notes/sprzet-waveshare-v2.md\` ani żadnego pliku w \`wiki/projekty/foxie-notes/zadania/\`.
 4. Zachowaj wszystkie konkretne fakty, godziny, kwoty, nazwy i zadania (z \`@due(YYYY-MM-DD)\` jeśli padła konkretna data). Konsoliduj powiązane kroki jednej sprawy w JEDNO konkretne zadanie — nie rozbijaj pojedynczej czynności na osobne meta-zadanie typu "znaleźć numer/sprawdzić adres" i właściwe wykonanie.
 5. \`contentMarkdown\` nie może zawierać YAML frontmattera ani nagłówka H1 (\`# ...\`) ani sekcji \`## Zadania\` (zadania podaj wyłącznie w polu \`tasks\`).
 6. Zwróć WYŁĄCZNIE poprawny obiekt JSON o polach:
@@ -943,74 +963,125 @@ export async function organizeInboxFile(params: {
       title: decision.title,
     });
     const targetRepoPath = joinRepoPath(params.vaultPrefix, targetRelativePath);
-
-    const existingTargetMd = existingWikiPaths.includes(targetRelativePath)
-      ? await params.vaultClient.fetchFile(targetRepoPath)
-      : null;
-
-    const nextPageMarkdown = existingTargetMd
-      ? mergeIntoExistingWikiPage({
-          existingMarkdown: existingTargetMd,
-          targetPath: targetRelativePath,
-          tags: decision.tags,
-          sectionHeading: decision.sectionHeading,
-          contentMarkdown: decision.contentMarkdown,
-          tasks: decision.tasks,
-          processedPath: processedRelativePath,
-          noteTime,
-          updatedAtIso: nowIso,
-          fallbackTitle: decision.title,
-          fallbackSummary: decision.summary,
-          isTestNote: decision.isTestNote,
-        })
-      : renderNewWikiPage({
-          targetPath: targetRelativePath,
-          title: decision.title,
-          summary: decision.summary,
-          tags: decision.tags,
-          relatedLinks: decision.relatedLinks,
-          sectionHeading: decision.sectionHeading,
-          contentMarkdown: decision.contentMarkdown,
-          tasks: decision.tasks,
-          processedPath: processedRelativePath,
-          noteTime,
-          updatedAtIso: nowIso,
-          isTestNote: decision.isTestNote,
-        });
-
     const targetSlug = targetRelativePath.replace(/^wiki\//i, "").replace(/\.md$/i, "");
-    const { markdown: nextIndexMd, changed: indexChanged } = updateWikiIndexMarkdown({
-      existingIndexMarkdown: indexMd,
-      slug: targetSlug,
-      title: decision.title,
-      description: decision.indexDescription,
-      section: decision.indexSection,
-      updatedAtIso: nowIso,
-    });
 
-    const nextLogMd = prependWikiLogMarkdown({
-      existingLogMarkdown: logMd,
-      dateStr: nowIso.slice(0, 10),
-      updatedAtIso: nowIso,
-      intent: decision.intent,
-      logEntry: decision.logEntry,
-      slug: targetSlug,
-      title: decision.title,
-      processedPath: processedRelativePath,
-    });
+    const maxCommitAttempts = 4;
+    let commitRes: { commitSha: string; treeSha: string; branch: string } | undefined;
 
-    const changes: AtomicFileChange[] = [
-      { path: targetRepoPath, content: nextPageMarkdown },
-      ...(indexChanged ? [{ path: indexRepoPath, content: nextIndexMd }] : []),
-      { path: logRepoPath, content: nextLogMd },
-      { path: processedRepoPath, content: rawMarkdown },
-      { path: params.inboxRepoPath, content: null },
-    ];
+    for (let attempt = 0; attempt < maxCommitAttempts; attempt++) {
+      let currentIndexMd = indexMd;
+      let currentLogMd = logMd;
+      let existingTargetMd: string | null = null;
 
-    const commitRes = await params.vaultClient.commitAtomicChanges({
-      changes,
-      commitMessage: `agent(organizer): ${decision.title} (${decision.intent})`,
-    });
+      if (attempt > 0) {
+        const backoffMs = 250 * attempt + Math.floor(Math.random() * 250);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+        const latestInbox = await params.vaultClient.fetchFile(params.inboxRepoPath);
+        if (latestInbox === null) {
+          await params.store.completeInboxJob({
+            id: "",
+            inboxPath: params.inboxRepoPath,
+            status: "done",
+            createdAt,
+            updatedAt: nowIso,
+            error: "Source file no longer present in raw/inbox/",
+          });
+          return {
+            inboxPath: params.inboxRepoPath,
+            status: "skipped",
+            reason: "source_file_missing",
+          };
+        }
+
+        const [freshTargetMd, freshIndexMd, freshLogMd] = await Promise.all([
+          params.vaultClient.fetchFile(targetRepoPath),
+          params.vaultClient.fetchFile(indexRepoPath),
+          params.vaultClient.fetchFile(logRepoPath),
+        ]);
+        existingTargetMd = freshTargetMd;
+        currentIndexMd = freshIndexMd;
+        currentLogMd = freshLogMd;
+      } else if (existingWikiPaths.includes(targetRelativePath)) {
+        existingTargetMd = await params.vaultClient.fetchFile(targetRepoPath);
+      }
+
+      const nextPageMarkdown = existingTargetMd
+        ? mergeIntoExistingWikiPage({
+            existingMarkdown: existingTargetMd,
+            targetPath: targetRelativePath,
+            tags: decision.tags,
+            sectionHeading: decision.sectionHeading,
+            contentMarkdown: decision.contentMarkdown,
+            tasks: decision.tasks,
+            processedPath: processedRelativePath,
+            noteTime,
+            updatedAtIso: nowIso,
+            fallbackTitle: decision.title,
+            fallbackSummary: decision.summary,
+            isTestNote: decision.isTestNote,
+          })
+        : renderNewWikiPage({
+            targetPath: targetRelativePath,
+            title: decision.title,
+            summary: decision.summary,
+            tags: decision.tags,
+            relatedLinks: decision.relatedLinks,
+            sectionHeading: decision.sectionHeading,
+            contentMarkdown: decision.contentMarkdown,
+            tasks: decision.tasks,
+            processedPath: processedRelativePath,
+            noteTime,
+            updatedAtIso: nowIso,
+            isTestNote: decision.isTestNote,
+          });
+
+      const { markdown: nextIndexMd, changed: indexChanged } = updateWikiIndexMarkdown({
+        existingIndexMarkdown: currentIndexMd,
+        slug: targetSlug,
+        title: decision.title,
+        description: decision.indexDescription,
+        section: decision.indexSection,
+        updatedAtIso: nowIso,
+      });
+
+      const nextLogMd = prependWikiLogMarkdown({
+        existingLogMarkdown: currentLogMd,
+        dateStr: nowIso.slice(0, 10),
+        updatedAtIso: nowIso,
+        intent: decision.intent,
+        logEntry: decision.logEntry,
+        slug: targetSlug,
+        title: decision.title,
+        processedPath: processedRelativePath,
+      });
+
+      const changes: AtomicFileChange[] = [
+        { path: targetRepoPath, content: nextPageMarkdown },
+        ...(indexChanged ? [{ path: indexRepoPath, content: nextIndexMd }] : []),
+        { path: logRepoPath, content: nextLogMd },
+        { path: processedRepoPath, content: rawMarkdown },
+        { path: params.inboxRepoPath, content: null },
+      ];
+
+      try {
+        commitRes = await params.vaultClient.commitAtomicChanges({
+          changes,
+          commitMessage: `agent(organizer): ${decision.title} (${decision.intent})`,
+          maxRetries: 0,
+        });
+        break;
+      } catch (commitErr) {
+        if (isGitConflictError(commitErr) && attempt + 1 < maxCommitAttempts) {
+          continue;
+        }
+        throw commitErr;
+      }
+    }
+
+    if (!commitRes) {
+      throw new Error("Failed to commit organized inbox note after retries");
+    }
 
     let researchResult: ResearchRunResult | undefined;
     if (decision.intent === "research-idea" && params.enableResearchAgent !== false) {

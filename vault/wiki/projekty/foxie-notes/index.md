@@ -1,7 +1,7 @@
 ---
 title: Foxie Notes
 slug: projekty/foxie-notes/index
-updated_at: 2026-11-26T16:25:00Z
+updated_at: 2026-11-27T10:08:00Z
 tags: [projekt, foxie-notes, esp32, obsidian]
 ---
 
@@ -28,3 +28,4 @@ Prywatny system do szybkiego przechwytywania notatek głosowych i przeglądania 
 - [[projekty/foxie-notes/zadania/etap-1-urzadzenie|Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)]]
 - [[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi|Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)]]
 - [[projekty/foxie-notes/zadania/etap-2-wiki-webapp|Zadania — Etap 2 (Webhook, Firestore, Web App)]]
+- [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|Zadania — Etap 3 (UX urządzenia, Stabilność, Cykliczni Agenci)]]

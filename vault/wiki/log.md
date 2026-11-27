@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T09:40:00Z
+updated_at: 2026-11-27T10:08:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Paczka 1 — Naprawa wyścigu Git `422`, porządki w `obsydianandwiki`, opróżnienie `raw/inbox/` i `npm run vault:overview`:**
+  - Zdiagnozowano przyczynę 3 zaległych plików w `raw/inbox/` (seria uploadów z SD wywołała wyścig `422 Update is not a fast forward` podczas równoległych commitów `capture` i `agent(organizer)`, a brak retry przerywał organizację bez ponowienia). Dodano retry w [`github.ts`](../../../functions/src/services/github.ts) (`isGitConflictError`), retry z ponownym scalaniem `wiki/index.md`, `wiki/log.md` i strony docelowej w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts), kanonizację aliasów `foxie-notes` (`foxy-news`, `foxing-news`, `foxie-news`) oraz ochronę `sprzet-waveshare-v2.md` i `zadania/*`. Testy `npm --prefix functions test`: `24/24` pass; wdrożono Cloud Function `api`.
+  - Wyczyszczono zdalny vault `obsydianandwiki` (commit `7ab81e5`): usunięto `pomysly/bateria-lipo-obudowa-waveshare`, scalono `foxing-news` i notatki UX wybudzania do `wiki/projekty/foxie-notes/notatki.md`, naprawiono `wiki/index.md` oraz opróżniono wszystkie 3 zaległe pliki w `raw/inbox/` przez `POST /api/agents/organize-inbox` (`processed: 3, errors: 0`).
+  - Dodano skrypt [`vault-overview.mjs`](../../../scripts/vault-overview.mjs) (`npm run vault:overview`), checklistę [`etap-3-ux-i-stabilnosc.md`](../../../vault/wiki/projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc.md) oraz zaktualizowano [`AGENTS.md`](../../../AGENTS.md) i [`SKILL.md`](../../../.agents/skills/obsidian-commit-sync/SKILL.md) o automatyczny przegląd całego vaulta (`raw/inbox/`, `projekty/`, `pomysly/`, `obszary/`).
 - **Bezpośrednia publikacja raportów Research na `main` (bez ręcznych PR) + automatyczne przypisanie do kategorii PARA:**
   - Przebudowano [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts), aby publikował raporty `research.md` bezpośrednio na `main` w docelowym folderze kategorii PARA (`wiki/obszary/...`, `wiki/projekty/...`, `wiki/pomysly/...`, `wiki/zasoby/...`, z ochroną chronionych plików `foxie-notes`), automatycznie aktualizował `wiki/index.md`, `wiki/log.md` oraz dopisywał sekcję `## Powiązany research` w notatce nadrzędnej.
   - Zaktualizowano UI w [`WikiView.tsx`](../../../web/src/components/WikiView.tsx) (`Zrób Research` + bezpośredni przycisk `Otwórz [[slug]]`), [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`Research: [[slug]]`) oraz [`api.ts`](../../../web/src/lib/api.ts), a testy w [`researchAgent.test.ts`](../../../functions/src/__tests__/researchAgent.test.ts) przeszły w `23/23` przypadkach.

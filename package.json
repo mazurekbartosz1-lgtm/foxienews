@@ -9,6 +9,7 @@
     "watch:functions": "npm --prefix functions run build:watch",
     "build:web": "npm --prefix web run build",
     "emulators": "firebase emulators:start",
-    "sync:vault": "node scripts/sync-obsidian-vault.mjs"
+    "sync:vault": "node scripts/sync-obsidian-vault.mjs",
+    "vault:overview": "node scripts/vault-overview.mjs"
   }
 }

@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T09:40:00Z
+updated_at: 2026-11-27T10:08:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -38,7 +38,8 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Faza 2 — Agent Researcher (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` (lub na żądanie z przycisku **Zrób Research** w `web/`) wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`) i zapisuje raport **bezpośrednio do `main`** w dopasowanym folderze/kategorii PARA (np. `wiki/pomysly/<slug>/research.md`, `wiki/obszary/.../<temat>/research.md`, `wiki/projekty/.../<temat>/research.md`, `wiki/zasoby/<temat>/research.md` — z ochroną chronionego `foxie-notes`), automatycznie dopisuje wpis do `wiki/index.md`, `wiki/log.md` oraz link w notatce źródłowej (`## Powiązany research`) bez czekania na ręczny merge PR. Zaległe PR **#2** (`596f0ba`) i **#3** (`736cbfe`) w `obsydianandwiki` zostały scalone do `main`.
    - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` najpierw automatycznie wyszukuje brakujące dane wykonawcze (numer telefonu, adres, godziny, link do walidacji) przez Google Search grounding (`enrichActionableContextWithGemini`), a następnie konsoliduje sprawę w **jedno gotowe do wykonania zadanie** (zero rozbitych meta-zadań typu „znajdź numer”) i ewentualnie jedno wydarzenie w **Google Calendar** (próg pewności `>= 0.75`, z adresem w `location` i zebranymi danymi w opisie), obsługuje **Google Tasks** (`@default`) oraz tematyczne **Google Listy**, bez duplikowania sekcji `## Synchronizacja Google` w `wiki/`.
    - **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + intencja `vault-command`):** Wykonuje polecenia reorganizacji repozytorium Obsidian (np. tworzenie podfolderów tematycznych i wydzielanie stron `wiki/`, scalanie powiązanych notatek z `wiki/` i `raw/processed/`). Posiada twarde guardraile blokujące modyfikację/usunięcie plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), deterministycznie aktualizuje `wiki/index.md` i `wiki/log.md` oraz commituje atomowo z prefiksem `agent(curator):`. Zweryfikowano na żywo utworzeniem `wiki/obszary/zdrowie/samopoczucie.md` (commit `6a6300b`, zsynchronizowane do `GET /api/api/wiki/index`).
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `23/23` przypadkach (`tsc` + `node --test`).
+   - **Odporność na wyścigi Git `422` i spójność `foxie-notes` (`github.ts`, `inboxOrganizer.ts`, `scripts/vault-overview.mjs`):** `commitAtomicChanges` i `organizeInboxFile` ponawiają zapis przy konflikcie `422 non-fast-forward` (z odświeżeniem i ponownym scaleniem `wiki/index.md`, `wiki/log.md` oraz docelowej strony), a `sanitizeTargetPath` mapuje literówki transkrypcji (`foxy-news`, `foxing-news`, `foxie-news`) na `foxie-notes` i chroni `sprzet-waveshare-v2.md` oraz `zadania/*`. Skrypt `npm run vault:overview` zapewnia pełny przegląd zdalnego vaulta (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/` i integralność `wiki/index.md`).
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `24/24` przypadkach (`tsc` + `node --test`).
 
 4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
    - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).
@@ -54,18 +55,22 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 - **Sekrety lokalne:** `firmware/include/config.h` zawiera lokalne dane Wi-Fi i jest chroniony przez `.gitignore` — **nigdy** nie dodawaj go do gita ani nie wpisuj haseł do `vault/`.
 - **PowerShell 5.1 na Windows:** Operator `&&` nie działa w lokalnym Windows PowerShell 5.1; w skryptach/komendach używaj `;` z `$ErrorActionPreference = 'Stop'`.
 - **Ochrona `wiki/index.md` i `wiki/log.md` w `sync-obsidian-vault.mjs`:** Skrypt `npm run sync:vault` synchronizuje `SCHEMA.md` oraz `vault/wiki/projekty/foxie-notes/**`, a korzeń (`wiki/index.md`, `wiki/log.md`) zapisuje tylko jeśli nie istnieje jeszcze zdalnie (lub z flagą `--include-root-wiki`), dzięki czemu nie nadpisuje wpisów utworzonych przez Agenta Organizatora w `obsydianandwiki`.
-- **10-sekundowy timeout HTTP webhooków GitHuba:** Pełny łańcuch `Organizator + Researcher z Google Search grounding` trwa ok. 20–30 s — Cloud Function `api` (`timeoutSeconds: 180`) kończy pracę w chmurze i otwiera PR pomyślnie, natomiast sam webhook GitHuba po stronie `deliveries` zgłasza `Client.Timeout` po 10 s. Docelowo przy większym obciążeniu warto rozważyć oddelegowanie ciężkich agentów przez Cloud Tasks / PubSub i natychmiastowe `202 Accepted` z webhooka.
+- **Ochrona zdalnego `wiki/projekty/foxie-notes/notatki.md`:** Plik `notatki.md` w zdalnym `obsydianandwiki` jest utrzymywany przez Agenta Organizatora z nagrań z płytki — **nie tworzyć** go lokalnie w `vault/wiki/projekty/foxie-notes/`, aby `npm run sync:vault` nie nadpisywał wpisów agentów.
+- **Wyścigi `422 non-fast-forward` przy seriach z kolejki SD:** Kiedy urządzenie wysyła paczkę 10+ nagrań co kilkanaście sekund, równoległe commity `capture(...)` i `agent(organizer)` potrafiły wywołać `HTTP 422` przy `updateRef`. Naprawiono przez retry + świeży re-merge `wiki/index.md` i `wiki/log.md` w `inboxOrganizer.ts` oraz retry w `github.ts`.
+- **10-sekundowy timeout HTTP webhooków GitHuba:** Pełny łańcuch `Organizator + Researcher z Google Search grounding` trwa ok. 20–30 s — Cloud Function `api` (`timeoutSeconds: 180`) kończy pracę w chmurze pomyślnie, natomiast sam webhook GitHuba po stronie `deliveries` zgłasza `Client.Timeout` po 10 s. Docelowo warto rozważyć cykliczny auto-sweeper `raw/inbox/` oraz oddelegowanie ciężkich agentów przez Cloud Tasks / PubSub z natychmiastowym `202 Accepted`.
 - **Workflow commitów:** Każda zmiana przed `git commit` musi zaktualizować ten plik, listy w `zadania/` oraz `vault/wiki/log.md` zgodnie ze skillem `.agents/skills/obsidian-commit-sync/SKILL.md`.
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Opcja B: Cykliczni agenci Kurator „Ogrodnik” + Przegląd Tygodniowy (`functions/`, `onSchedule`):**
-   - Etap 2B (`web/`) jest wdrożony pod `https://foxienews.vercel.app/` (po zapisaniu `VITE_FIREBASE_APP_ID` i dodaniu domeny w Firebase Authorized domains).
-   - Kolejny krok rozwojowy w backendzie to okresowy **Agent Kurator Wiki („Ogrodnik”)** (raz w tygodniu -> zapisuje porządki bezpośrednio na `main` w `obsydianandwiki` bez czekania na PR) oraz **Agent Przegląd Tygodniowy** (`wiki/dziennik/tydzien-YYYY-Www.md`).
+1. **Priorytet 1 — Etap 3, Paczka 2: Quick Wins w firmware Waveshare V2 (`firmware/`):**
+   - Checklista w [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|etap-3-ux-i-stabilnosc.md]] (Paczka 1 zakończona; `raw/inbox/` pusty).
+   - Kolejne kroki do wykonania w kodzie: wydłużenie limitu nagrywania do `2 min` (`MAX_DURATION_SEC = 120`), schowanie ekranu QR z normalnej ścieżki, ikona synchronizacji Wi-Fi + licznik kolejki (`1/5`), oraz bilans zużycia baterii.
+   - Następnie: szybkie wybudzanie (`Sleeping -> Wake up -> Recording`) + beep ES8311 oraz cykliczni agenci `onSchedule` (Ogrodnik + Przegląd Tygodniowy + auto-sweeper `raw/inbox/`).
 
 ## Pliki startowe do wczytania w nowym oknie
 
 1. `AGENTS.md` (reguły repozytorium ładowane automatycznie)
 2. `vault/wiki/projekty/foxie-notes/status.md` (ten plik)
-3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md` (baza agentów do rozbudowy o Kuratora)
+3. `vault/wiki/projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc.md` (aktywna checklista Etapu 3)
 4. `vault/wiki/log.md`
+5. Uruchomić `npm run vault:overview` (`BypassSandbox: true`), aby zobaczyć pełny stan zdalnego `obsydianandwiki` (`raw/inbox/`, `projekty/`, `pomysly/`, `obszary/`).

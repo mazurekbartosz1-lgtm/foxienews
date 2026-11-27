@@ -1,7 +1,7 @@
 ---
 title: Spis treści
 slug: index
-updated_at: 2026-11-26T16:25:00Z
+updated_at: 2026-11-27T10:08:00Z
 tags: [index]
 ---
 
@@ -16,6 +16,7 @@ Centralny indeks wiedzy utrzymywany lokalnie w `vault/` oraz przez LLM Wiki.
   - [[projekty/foxie-notes/zadania/etap-1-urzadzenie|Zadania — Etap 1 (Urządzenie, Symulator, /api/capture)]] — Priorytet 1: symulator z liskiem, backend `/api/capture`, firmware Waveshare V2 (zakończony).
   - [[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi|Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)]] — Aktualny priorytet przed web app: automatyczne porządkowanie `raw/inbox/` w `obsydianandwiki`, PR z researchu oraz Google Calendar/Tasks.
   - [[projekty/foxie-notes/zadania/etap-2-wiki-webapp|Zadania — Etap 2B (Webhook, Firestore, Web App)]] — Synchronizacja GitHub -> Firestore (zrobione) oraz aplikacja webowa (po agentach).
+  - [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|Zadania — Etap 3 (UX urządzenia, Stabilność, Cykliczni Agenci)]] — Aktywny backlog: poprawki UX w firmware Waveshare V2, stabilność i cykliczni agenci.
 
 ## System
 - [[log|Dziennik zmian (log)]]

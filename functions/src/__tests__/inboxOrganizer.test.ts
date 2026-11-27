@@ -12,6 +12,7 @@ import type {
 import {
   buildProcessedPath,
   mergeIntoExistingWikiPage,
+  organizeInboxFile,
   prependWikiLogMarkdown,
   sanitizeTargetPath,
   updateWikiIndexMarkdown,
@@ -120,6 +121,38 @@ test("sanitizeTargetPath enforces PARA + Dziennik, blocks traversal and protecte
       isTestNote: true,
     }),
     "wiki/dziennik/2026-11-26.md",
+  );
+
+  assert.equal(
+    sanitizeTargetPath({
+      rawTargetPath: "wiki/projekty/foxing-news/synchronizacja-wifi.md",
+      noteDate: "2026-11-27",
+    }),
+    "wiki/projekty/foxie-notes/synchronizacja-wifi.md",
+  );
+
+  assert.equal(
+    sanitizeTargetPath({
+      rawTargetPath: "wiki/projekty/foxy-news/wybudzanie.md",
+      noteDate: "2026-11-27",
+    }),
+    "wiki/projekty/foxie-notes/wybudzanie.md",
+  );
+
+  assert.equal(
+    sanitizeTargetPath({
+      rawTargetPath: "wiki/projekty/foxie-notes/sprzet-waveshare-v2.md",
+      noteDate: "2026-11-27",
+    }),
+    "wiki/projekty/foxie-notes/notatki.md",
+  );
+
+  assert.equal(
+    sanitizeTargetPath({
+      rawTargetPath: "wiki/projekty/foxie-notes/zadania/etap-1-urzadzenie.md",
+      noteDate: "2026-11-27",
+    }),
+    "wiki/projekty/foxie-notes/notatki.md",
   );
 });
 
@@ -470,4 +503,122 @@ test("Webhook & POST /api/agents/organize-inbox run Organizer end-to-end with an
       server.close((err) => (err ? reject(err) : resolve())),
     );
   }
+});
+
+test("organizeInboxFile retries on 422 non-fast-forward and preserves concurrent wiki/index.md & wiki/log.md updates", async () => {
+  const inboxPath = "raw/inbox/2026-11-27T08-48-05Z-waveshare-154-telefon-do-rodzicow.md";
+  const { client: baseClient, files } = createInMemoryGitHubVaultClient({
+    "SCHEMA.md": "# SCHEMA\nPARA + Dziennik",
+    "wiki/index.md": [
+      "---",
+      "title: Spis treści",
+      "slug: index",
+      "updated_at: 2026-11-27T08:00:00Z",
+      "tags: [index]",
+      "---",
+      "",
+      "# Spis treści",
+      "",
+      "## Obszary",
+      "- [[obszary/auto/toyota|Toyota]] — Serwis",
+      "",
+      "## System",
+      "- [[log|Dziennik zmian]]",
+      "",
+    ].join("\n"),
+    "wiki/log.md": [
+      "---",
+      "title: Dziennik zmian",
+      "slug: log",
+      "updated_at: 2026-11-27T08:00:00Z",
+      "tags: [log]",
+      "---",
+      "",
+      "# Dziennik zmian",
+      "",
+      "## 2026-11-27",
+      "- Wpis bazowy.",
+      "",
+    ].join("\n"),
+    [inboxPath]: [
+      "---",
+      "created_at: 2026-11-27T08:48:05Z",
+      "source: waveshare-154",
+      "type: voice-note",
+      "tags: [inbox, rodzina]",
+      "---",
+      "",
+      "# Telefon do rodziców",
+      "",
+      "Zadzwonić do mamy i taty w ten weekend.",
+    ].join("\n"),
+  });
+
+  let commitAttempts = 0;
+  const racingClient: GitHubVaultClient = {
+    ...baseClient,
+    async commitAtomicChanges(params) {
+      commitAttempts++;
+      if (commitAttempts === 1) {
+        // Simulate another concurrent organizer landing its own commit right before updateRef
+        const concurrentIdx = (files.get("wiki/index.md") ?? "").replace(
+          "## System",
+          "- [[obszary/finanse/cele|Finanse — cele]] — Cele długoterminowe\n\n## System",
+        );
+        files.set("wiki/index.md", concurrentIdx);
+
+        const concurrentLog = (files.get("wiki/log.md") ?? "").replace(
+          "## 2026-11-27\n",
+          "## 2026-11-27\n- **Agent Organizator (`knowledge`):** Dodano finanse.\n",
+        );
+        files.set("wiki/log.md", concurrentLog);
+
+        const conflictErr = new Error("Update is not a fast forward") as Error & { status?: number };
+        conflictErr.status = 422;
+        throw conflictErr;
+      }
+      return baseClient.commitAtomicChanges(params);
+    },
+  };
+
+  const store = createInMemoryVaultStore();
+  let classifyCalls = 0;
+
+  const result = await organizeInboxFile({
+    inboxRepoPath: inboxPath,
+    vaultClient: racingClient,
+    store,
+    enablePlanningAgent: false,
+    now: () => new Date("2026-11-27T09:00:00Z"),
+    classifyNote: async () => {
+      classifyCalls++;
+      return {
+        intent: "todo",
+        targetPath: "wiki/obszary/rodzina/kontakty.md",
+        title: "Rodzina i kontakty",
+        summary: "Przypomnienia o kontaktach z rodziną.",
+        tags: ["rodzina", "telefon"],
+        relatedLinks: [],
+        sectionHeading: "Telefon do rodziców",
+        contentMarkdown: "Zadzwonić do mamy i taty w ten weekend.",
+        tasks: ["Zadzwonić do rodziców w weekend"],
+        indexSection: "Obszary",
+        indexDescription: "Kontakty rodzinne.",
+        logEntry: "Dodano przypomnienie o telefonie do rodziców",
+      };
+    },
+  });
+
+  assert.equal(result.status, "processed");
+  assert.equal(commitAttempts, 2);
+  assert.equal(classifyCalls, 1);
+  assert.equal(files.has(inboxPath), false);
+
+  const finalIndex = files.get("wiki/index.md") ?? "";
+  assert.match(finalIndex, /\[\[obszary\/finanse\/cele\|/);
+  assert.match(finalIndex, /\[\[obszary\/rodzina\/kontakty\|/);
+
+  const finalLog = files.get("wiki/log.md") ?? "";
+  assert.match(finalLog, /Dodano finanse/);
+  assert.match(finalLog, /Dodano przypomnienie o telefonie do rodziców/);
 });

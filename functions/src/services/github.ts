@@ -35,6 +35,7 @@ export interface GitHubVaultClient {
     changes: AtomicFileChange[];
     commitMessage: string;
     branch?: string;
+    maxRetries?: number;
   }): Promise<AtomicCommitResult>;
   createBranch(params: { branchName: string; fromBranch?: string }): Promise<string>;
   findOpenPullRequest(headBranch: string): Promise<PullRequestResult | null>;
@@ -44,6 +45,18 @@ export interface GitHubVaultClient {
     head: string;
     base?: string;
   }): Promise<PullRequestResult>;
+}
+
+export function isGitConflictError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (status === 422 || status === 409) {
+    return true;
+  }
+  const message =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return /not a fast forward|update is not a fast forward|reference already exists|merge conflict/i.test(
+    message,
+  );
 }
 
 function readGitHubEnv() {
@@ -140,9 +153,10 @@ export function createGitHubVaultClient(): GitHubVaultClient {
       changes: AtomicFileChange[];
       commitMessage: string;
       branch?: string;
+      maxRetries?: number;
     }): Promise<AtomicCommitResult> {
       const targetBranch = params.branch?.trim() || branch;
-      const { headCommitSha, baseTreeSha } = await resolveBranchHead(targetBranch);
+      const maxRetries = params.maxRetries ?? 3;
 
       type TreeItem = {
         path: string;
@@ -178,40 +192,55 @@ export function createGitHubVaultClient(): GitHubVaultClient {
         });
       }
 
-      const nextTree = await octokit.rest.git.createTree({
-        owner,
-        repo,
-        base_tree: baseTreeSha,
-        // Octokit's generated type omits `sha: null`, which Git Data API requires to delete a blob.
-        tree: treeEntries as unknown as Array<{
-          path?: string;
-          mode?: "100644";
-          type?: "blob";
-          sha?: string;
-          content?: string;
-        }>,
-      });
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const { headCommitSha, baseTreeSha } = await resolveBranchHead(targetBranch);
 
-      const nextCommit = await octokit.rest.git.createCommit({
-        owner,
-        repo,
-        message: params.commitMessage,
-        tree: nextTree.data.sha,
-        parents: [headCommitSha],
-      });
+          const nextTree = await octokit.rest.git.createTree({
+            owner,
+            repo,
+            base_tree: baseTreeSha,
+            // Octokit's generated type omits `sha: null`, which Git Data API requires to delete a blob.
+            tree: treeEntries as unknown as Array<{
+              path?: string;
+              mode?: "100644";
+              type?: "blob";
+              sha?: string;
+              content?: string;
+            }>,
+          });
 
-      await octokit.rest.git.updateRef({
-        owner,
-        repo,
-        ref: `heads/${targetBranch}`,
-        sha: nextCommit.data.sha,
-      });
+          const nextCommit = await octokit.rest.git.createCommit({
+            owner,
+            repo,
+            message: params.commitMessage,
+            tree: nextTree.data.sha,
+            parents: [headCommitSha],
+          });
 
-      return {
-        commitSha: nextCommit.data.sha,
-        treeSha: nextTree.data.sha,
-        branch: targetBranch,
-      };
+          await octokit.rest.git.updateRef({
+            owner,
+            repo,
+            ref: `heads/${targetBranch}`,
+            sha: nextCommit.data.sha,
+          });
+
+          return {
+            commitSha: nextCommit.data.sha,
+            treeSha: nextTree.data.sha,
+            branch: targetBranch,
+          };
+        } catch (err) {
+          if (attempt < maxRetries && isGitConflictError(err)) {
+            const backoffMs = 200 * (attempt + 1) + Math.floor(Math.random() * 250);
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      throw new Error("Exhausted atomic commit retries");
     },
 
     async createBranch(params: { branchName: string; fromBranch?: string }): Promise<string> {
