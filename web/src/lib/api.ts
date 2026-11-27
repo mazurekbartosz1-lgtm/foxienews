@@ -1,8 +1,10 @@
 import type {
   CaptureResponse,
+  GardenerRunResponse,
   PlanRunResponse,
   ResearchRunResponse,
   VaultCommandRunResponse,
+  WeeklyReviewRunResponse,
 } from "../types";
 import { auth } from "./firebase";
 
@@ -99,5 +101,21 @@ export async function triggerVaultCommand(
   return apiFetch<VaultCommandRunResponse>("/api/agents/vault-command", {
     method: "POST",
     body: JSON.stringify({ command }),
+  });
+}
+
+export async function triggerGardener(): Promise<GardenerRunResponse> {
+  return apiFetch<GardenerRunResponse>("/api/agents/gardener", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function triggerWeeklyReview(
+  force = true,
+): Promise<WeeklyReviewRunResponse> {
+  return apiFetch<WeeklyReviewRunResponse>("/api/agents/weekly-review", {
+    method: "POST",
+    body: JSON.stringify({ force }),
   });
 }

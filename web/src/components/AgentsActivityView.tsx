@@ -3,6 +3,7 @@ import { collection, onSnapshot } from "firebase/firestore";
 import {
   Bot,
   CalendarCheck2,
+  CalendarRange,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -11,11 +12,22 @@ import {
   GitPullRequest,
   Loader2,
   Play,
+  Sparkles,
   XCircle,
 } from "lucide-react";
-import { triggerOrganizeInbox, triggerVaultCommand } from "../lib/api";
+import {
+  triggerGardener,
+  triggerOrganizeInbox,
+  triggerVaultCommand,
+  triggerWeeklyReview,
+} from "../lib/api";
 import { db, normalizeSlug } from "../lib/firebase";
-import type { InboxJobDoc, VaultCommandRunResponse } from "../types";
+import type {
+  GardenerRunResponse,
+  InboxJobDoc,
+  VaultCommandRunResponse,
+  WeeklyReviewRunResponse,
+} from "../types";
 
 interface AgentsActivityViewProps {
   onOpenWikiSlug: (slug: string) => void;
@@ -32,6 +44,10 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
   const [commandBusy, setCommandBusy] = useState(false);
   const [commandResult, setCommandResult] = useState<VaultCommandRunResponse | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const [gardenerBusy, setGardenerBusy] = useState(false);
+  const [gardenerResult, setGardenerResult] = useState<GardenerRunResponse | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewResult, setReviewResult] = useState<WeeklyReviewRunResponse | null>(null);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -87,31 +103,93 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
     }
   };
 
+  const handleRunGardener = async () => {
+    setGardenerBusy(true);
+    setBatchMessage(null);
+    setGardenerResult(null);
+    try {
+      const res = await triggerGardener();
+      setGardenerResult(res);
+    } catch (err) {
+      setBatchMessage(
+        err instanceof Error ? err.message : "Nie udało się uruchomić Ogrodnika Wiki.",
+      );
+    } finally {
+      setGardenerBusy(false);
+    }
+  };
+
+  const handleRunWeeklyReview = async () => {
+    setReviewBusy(true);
+    setBatchMessage(null);
+    setReviewResult(null);
+    try {
+      const res = await triggerWeeklyReview(true);
+      setReviewResult(res);
+    } catch (err) {
+      setBatchMessage(
+        err instanceof Error ? err.message : "Nie udało się wygenerować przeglądu tygodniowego.",
+      );
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-3 rounded-2xl border border-[#E4DFD4] bg-[#FCFBF8] p-5 sm:flex-row sm:items-center">
         <div>
           <p className="font-mono-meta text-[11px] uppercase tracking-[0.16em] text-[#7A756D]">
-            Chmurowi agenci · Organizator · Researcher · Kurator · Planowanie
+            Chmurowi agenci · Organizator · Researcher · Kurator · Planowanie · Ogrodnik
           </p>
           <h2 className="mt-1 text-lg font-medium text-[#1C1A18]">
             Dziennik przetwarzania `raw/inbox/`
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunBatch}
-          disabled={runningBatch}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#1C1A18] px-4 py-2 text-xs font-medium text-[#FAF9F5] transition hover:bg-[#33302B] disabled:opacity-50"
-        >
-          {runningBatch ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Play className="h-3.5 w-3.5" />
-          )}
-          Przetwórz zaległy inbox
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleRunBatch}
+            disabled={runningBatch}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#1C1A18] px-4 py-2 text-xs font-medium text-[#FAF9F5] transition hover:bg-[#33302B] disabled:opacity-50"
+          >
+            {runningBatch ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            Przetwórz zaległy inbox
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRunGardener}
+            disabled={gardenerBusy}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#D7CEBF] bg-[#FAF9F5] px-3.5 py-2 text-xs font-medium text-[#2A2622] transition hover:border-[#2F5D50] hover:text-[#2F5D50] disabled:opacity-50"
+          >
+            {gardenerBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            Ogrodnik Wiki
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRunWeeklyReview}
+            disabled={reviewBusy}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#D7CEBF] bg-[#FAF9F5] px-3.5 py-2 text-xs font-medium text-[#2A2622] transition hover:border-[#9A4720] hover:text-[#9A4720] disabled:opacity-50"
+          >
+            {reviewBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CalendarRange className="h-3.5 w-3.5" />
+            )}
+            Przegląd tygodniowy
+          </button>
+        </div>
       </div>
 
       {batchMessage && (
@@ -119,6 +197,66 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
           {batchMessage}
         </div>
       )}
+
+      {gardenerResult && (
+        <div className="rounded-xl border border-[#C6D8CC] bg-[#F1F7F3] px-4 py-3 text-xs text-[#244B3C]">
+          <p className="font-medium">
+            Ogrodnik ({gardenerResult.status}): {gardenerResult.summary}
+          </p>
+          <p className="mt-1 font-mono-meta text-[11px] opacity-85">
+            Indeks +{gardenerResult.indexAdded.length} / -{gardenerResult.indexRemoved.length} ·
+            Zaktualizowano stron: {gardenerResult.filesUpdated.length}
+          </p>
+          {gardenerResult.filesUpdated.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {gardenerResult.filesUpdated.map((filePath) => {
+                const slug = normalizeSlug(filePath.replace(/^wiki\//i, ""));
+                return (
+                  <button
+                    key={filePath}
+                    type="button"
+                    onClick={() => onOpenWikiSlug(slug)}
+                    className="font-mono-meta inline-flex items-center gap-1 rounded-lg border border-[#B5CEC0] bg-[#FCFBF8] px-2.5 py-1 text-[11px] text-[#244B3C] hover:border-[#244B3C]"
+                  >
+                    [[{slug}]]
+                    <ExternalLink className="h-3 w-3" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {reviewResult && (() => {
+        const reviewSlug = normalizeSlug(
+          reviewResult.reportPath.replace(/^wiki\//i, ""),
+        );
+        return (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#DEC9B5] bg-[#FAF0E6] px-4 py-3 text-xs text-[#7E3817]">
+            <div>
+              <p className="font-medium">
+                Przegląd {reviewResult.weekKey} ({reviewResult.status}):{" "}
+                {reviewResult.summary}
+              </p>
+              <p className="mt-0.5 font-mono-meta text-[11px] opacity-85">
+                Dniówki: {reviewResult.journalDaysIncluded} · Otwarte zadania:{" "}
+                {reviewResult.openTasksCount}
+              </p>
+            </div>
+            {reviewSlug && (
+              <button
+                type="button"
+                onClick={() => onOpenWikiSlug(reviewSlug)}
+                className="font-mono-meta inline-flex items-center gap-1 rounded-lg border border-[#D4B497] bg-[#FCFBF8] px-2.5 py-1 text-[11px] text-[#9A4720] hover:border-[#9A4720]"
+              >
+                [[{reviewSlug}]]
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       <form
         onSubmit={handleRunCommand}

@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T12:00:00Z
+updated_at: 2026-11-27T12:20:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -39,13 +39,18 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Faza 2 — Agent Researcher (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` (lub na żądanie z przycisku **Zrób Research** w `web/`) wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`) i zapisuje raport **bezpośrednio do `main`** w dopasowanym folderze/kategorii PARA (np. `wiki/pomysly/<slug>/research.md`, `wiki/obszary/.../<temat>/research.md`, `wiki/projekty/.../<temat>/research.md`, `wiki/zasoby/<temat>/research.md` — z ochroną chronionego `foxie-notes`), automatycznie dopisuje wpis do `wiki/index.md`, `wiki/log.md` oraz link w notatce źródłowej (`## Powiązany research`) bez czekania na ręczny merge PR. Zaległe PR **#2** (`596f0ba`) i **#3** (`736cbfe`) w `obsydianandwiki` zostały scalone do `main`.
    - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` najpierw automatycznie wyszukuje brakujące dane wykonawcze (numer telefonu, adres, godziny, link do walidacji) przez Google Search grounding (`enrichActionableContextWithGemini`), a następnie konsoliduje sprawę w **jedno gotowe do wykonania zadanie** (zero rozbitych meta-zadań typu „znajdź numer”) i ewentualnie jedno wydarzenie w **Google Calendar** (próg pewności `>= 0.75`, z adresem w `location` i zebranymi danymi w opisie), obsługuje **Google Tasks** (`@default`) oraz tematyczne **Google Listy**, bez duplikowania sekcji `## Synchronizacja Google` w `wiki/`.
    - **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + intencja `vault-command`):** Wykonuje polecenia reorganizacji repozytorium Obsidian (np. tworzenie podfolderów tematycznych i wydzielanie stron `wiki/`, scalanie powiązanych notatek z `wiki/` i `raw/processed/`). Posiada twarde guardraile blokujące modyfikację/usunięcie plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), deterministycznie aktualizuje `wiki/index.md` i `wiki/log.md` oraz commituje atomowo z prefiksem `agent(curator):`. Zweryfikowano na żywo utworzeniem `wiki/obszary/zdrowie/samopoczucie.md` (commit `6a6300b`, zsynchronizowane do `GET /api/api/wiki/index`).
-   - **Odporność na wyścigi Git `422`, auto-czyszczenie `inboxSweeper` i spójność `foxie-notes` (`index.ts`, `github.ts`, `inboxOrganizer.ts`, `firestoreStore.ts`, `scripts/vault-overview.mjs`):** `commitAtomicChanges` i `organizeInboxFile` ponawiają zapis przy konflikcie `422 non-fast-forward` (z odświeżeniem i ponownym scaleniem `wiki/index.md`, `wiki/log.md` oraz docelowej strony), a `sanitizeTargetPath` mapuje literówki transkrypcji (`foxy-news`, `foxing-news`, `foxie-news`) na `foxie-notes` i chroni `sprzet-waveshare-v2.md` oraz `zadania/*`. Harmonogram `inboxSweeper` (`onSchedule` co 5 min w `europe-west1`) automatycznie przetwarza osierocone pliki z `raw/inbox/` z limitem `maxAttempts = 3` (po 3 nieudanych próbach zostawia plik nietknięty, dopóki nie użyje się `force: true`). Skrypt `npm run vault:overview` zapewnia pełny przegląd zdalnego vaulta (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/` i integralność `wiki/index.md`).
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `25/25` przypadkach (`tsc` + `node --test`).
+   - **Odporność na wyścigi Git `422`, auto-czyszczenie `inboxSweeper`, cykliczni agenci `weeklyGardener` + `weeklyReview` i spójność `foxie-notes`:**
+     - `commitAtomicChanges` i `organizeInboxFile` ponawiają zapis przy konflikcie `422 non-fast-forward` (z odświeżeniem i ponownym scaleniem `wiki/index.md`, `wiki/log.md` oraz docelowej strony), a `sanitizeTargetPath` mapuje literówki transkrypcji (`foxy-news`, `foxing-news`, `foxie-news`) na `foxie-notes` i chroni `sprzet-waveshare-v2.md` oraz `zadania/*`.
+     - Harmonogram `inboxSweeper` (`onSchedule` co 5 min w `europe-west1`) automatycznie przetwarza osierocone pliki z `raw/inbox/` z limitem `maxAttempts = 3`.
+     - **Kurator „Ogrodnik” (`gardenerAgent.ts`, `weeklyGardener` niedz. 04:00 `Europe/Warsaw` + `POST /api/agents/gardener`):** audytuje i naprawia `wiki/index.md` (brakujące/martwe wpisy), delikatnie pielęgnuje powiązania `[[wikilinks]]` bezpośrednio na `main` (z ochroną plików systemowych i `foxie-notes/**`) oraz posiada retry/fallback przy `503` Gemini. Zweryfikowano na żywo przez `POST /api/agents/gardener` (`skipLlm: true` -> `200 vault_already_clean`).
+     - **Przegląd Tygodniowy (`weeklyReviewAgent.ts`, `weeklyReview` niedz. 19:00 `Europe/Warsaw` + `POST /api/agents/weekly-review`):** generuje `wiki/dziennik/tydzien-YYYY-Www.md` z dniówek, `wiki/log.md`, otwartych zadań i pomysłów (z 3-krotnym retry przy `503`/`429` Gemini; w trakcie testu na żywo upstream Gemini miał okresowy szczyt obciążenia `503`/timeout).
+     - Skrypt `npm run vault:overview` zapewnia pełny przegląd zdalnego vaulta (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/` i integralność `wiki/index.md`).
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `29/29` przypadkach (`tsc` + `node --test`).
 
 4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
    - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).
    - Ekran logowania Google (`LoginPage.tsx` + `firebase.ts`) z blokadą dostępu poza `ALLOWED_USER_EMAIL` oraz obsługą `auth/unauthorized-domain` dla Vercel.
-   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs`, batch organizer oraz formularz **Polecenie dla Kuratora Wiki** z klikalnymi wynikowymi `[[slug]]`).
+   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs`, batch organizer, przyciski **Ogrodnik Wiki** i **Przegląd tygodniowy** oraz formularz **Polecenie dla Kuratora Wiki** z klikalnymi wynikowymi `[[slug]]`). Build `npm --prefix web run build` OK (`6.23 s`).
    - Konfiguracja Vercel w [`vercel.json`](../../../vercel.json) i [`web/vercel.json`](../../../web/vercel.json) (rewrite `/api/*` -> Cloud Function `api` + SPA fallback), lokalny gitignorowany `web/.env.local`.
 
 ## Kluczowe decyzje i pułapki
@@ -63,10 +68,10 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Sygnał dźwiękowy `beep` ES8311 (`firmware/`) lub Cykliczni Agenci (`functions/`):**
-   - Checklista w [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|etap-3-ux-i-stabilnosc.md]] (Paczka 1 + `inboxSweeper` + Paczka 2 + szybkie wybudzanie `3 stany + async Wi-Fi` zakończone i zweryfikowane na `COM5`).
-   - Kolejne kroki w `firmware/`: krótki sygnał dźwiękowy (`beep`) przez kodek ES8311 + wzmacniacz NS4150B (`DOUT=45`, `PA_CTRL=46`) po zakończeniu nagrania.
-   - Równolegle w `functions/`: cykliczni agenci `onSchedule` (Kurator „Ogrodnik” + Przegląd Tygodniowy `wiki/dziennik/tydzien-YYYY-Www.md`) oraz pomysł `[[pomysly/agent-ai-dla-developera]]`.
+1. **Priorytet 1 — Sygnał dźwiękowy `beep` ES8311 (`firmware/`) oraz projekt `[[pomysly/agent-ai-dla-developera]]`:**
+   - Checklista w [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|etap-3-ux-i-stabilnosc.md]] (Paczka 1 + `inboxSweeper` + Paczka 2 + szybkie wybudzanie + cykliczni agenci `weeklyGardener` / `weeklyReview` zakończone i wdrożone).
+   - Kolejny krok w `firmware/`: krótki sygnał dźwiękowy (`beep`) przez kodek ES8311 + wzmacniacz NS4150B (`DOUT=45`, `PA_CTRL=46`) po zakończeniu nagrania.
+   - Równolegle w `web/` warto wypchnąć zmiany na Vercel (`git push origin main`), a w `vault/wiki/pomysly/` przejść do architektury `[[pomysly/agent-ai-dla-developera]]`.
 
 ## Pliki startowe do wczytania w nowym oknie
 

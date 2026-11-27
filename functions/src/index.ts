@@ -4,8 +4,10 @@ import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { app } from "./app.js";
 import { createFirestoreVaultStore } from "./services/firestoreStore.js";
+import { runGardenerAgent } from "./services/gardenerAgent.js";
 import { createGitHubVaultClient } from "./services/github.js";
 import { organizePendingInboxFiles } from "./services/inboxOrganizer.js";
+import { runWeeklyReviewAgent } from "./services/weeklyReviewAgent.js";
 
 initializeApp();
 
@@ -67,5 +69,49 @@ export const inboxSweeper = onSchedule(
         `[inboxSweeper] processed=${result.processed} skipped=${result.skipped} errors=${result.errors}`,
       );
     }
+  },
+);
+
+export const weeklyGardener = onSchedule(
+  {
+    schedule: "0 4 * * 0",
+    timeZone: "Europe/Warsaw",
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    secrets: [githubToken, geminiApiKey],
+  },
+  async () => {
+    const vaultClient = createGitHubVaultClient();
+    const result = await runGardenerAgent({
+      vaultClient,
+      vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+    });
+    console.log(
+      `[weeklyGardener] status=${result.status} added=${result.indexAdded.length} removed=${result.indexRemoved.length} updated=${result.filesUpdated.length}`,
+    );
+  },
+);
+
+export const weeklyReview = onSchedule(
+  {
+    schedule: "0 19 * * 0",
+    timeZone: "Europe/Warsaw",
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    secrets: [githubToken, geminiApiKey],
+  },
+  async () => {
+    const vaultClient = createGitHubVaultClient();
+    const result = await runWeeklyReviewAgent({
+      vaultClient,
+      vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+    });
+    console.log(
+      `[weeklyReview] status=${result.status} week=${result.weekKey} path=${result.reportPath} days=${result.journalDaysIncluded} openTasks=${result.openTasksCount}`,
+    );
   },
 );

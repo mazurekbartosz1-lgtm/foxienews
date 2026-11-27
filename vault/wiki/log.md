@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T12:00:00Z
+updated_at: 2026-11-27T12:20:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Cykliczni agenci w chmurze (`weeklyGardener` + `weeklyReview`) oraz przyciski w `web/`:**
+  - Dodano [`gardenerAgent.ts`](../../../functions/src/services/gardenerAgent.ts) (deterministyczny audyt `wiki/index.md` + delikatna pielęgnacja powiązań `[[wikilinks]]` na `main` z ochroną plików chronionych i `foxie-notes/**`) oraz [`weeklyReviewAgent.ts`](../../../functions/src/services/weeklyReviewAgent.ts) (`wiki/dziennik/tydzien-YYYY-Www.md` z dniówek, `log.md`, otwartych zadań i pomysłów). W obu serwisach dodano 3-krotny retry przy chwilowym `503`/`429` Gemini.
+  - Podpięto harmonogramy `weeklyGardener` (`0 4 * * 0` `Europe/Warsaw`) i `weeklyReview` (`0 19 * * 0` `Europe/Warsaw`) w [`index.ts`](../../../functions/src/index.ts), endpointy `POST /api/agents/gardener` i `POST /api/agents/weekly-review` w [`app.ts`](../../../functions/src/app.ts), testy [`scheduledAgents.test.ts`](../../../functions/src/__tests__/scheduledAgents.test.ts) (`29/29` pass) oraz przyciski **Ogrodnik Wiki** i **Przegląd tygodniowy** w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`web` build OK).
+  - Wdrożono wszystkie 4 funkcje (`api`, `inboxSweeper`, `weeklyGardener`, `weeklyReview`) w Firebase; zweryfikowano na żywo `POST /api/agents/gardener` (`skipLlm: true` -> `200 vault_already_clean`; wywołanie LLM `weekly-review` trafiło na chwilowy szczyt obciążenia Gemini `503`/timeout).
 - **Szybkie 3-stanowe wybudzanie (`Sleeping -> WakingUp -> Recording/Ready`) i nieblokujące Wi-Fi (`firmware/` + `COM5`):**
   - W [`main.cpp`](../../../firmware/src/main.cpp) dodano stan `DeviceState::WakingUp` z ikoną `ICON_WAKE_16` i 3-segmentowym loaderem, natychmiastowe wybudzanie `EXT1` przez partial refresh (`nextPageToPrevious()` ~`439 ms` bez 3× mrugania ekranu), bezpośrednie wejście w `Recording` przy wybudzeniu przyciskiem `BOOT` oraz nieblokujące łączenie Wi-Fi w tle (`startWifiConnectAsync`, `pollWifiConnectAsync`, `abortWifiConnectAsync`).
   - Skompilowano (`RAM 17.1%` / `55996 B`, `Flash 36.8%` / `1230187 B`), wgrano na `COM5` (`15.58 s`) i zweryfikowano na żywo (`_Update_Part: 439 ms`, `Wi-Fi connected! -54 dBm`, `NTP synced: 12:59`, `state=0 wifi=3 cpuMhz=80 audioReady=1 sdMounted=1 psramFree=4507704 stackFree=11984`).

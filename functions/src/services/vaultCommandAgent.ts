@@ -10,7 +10,7 @@ import { slugifyPolish } from "./markdown.js";
 import { parseFrontmatter } from "./wikiParser.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 const MAX_SELECTED_FILES = 10;
 const ALLOWED_TOP_FOLDERS = new Set([
   "projekty",

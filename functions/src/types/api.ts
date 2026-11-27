@@ -147,3 +147,24 @@ export interface OrganizeInboxResult {
   vaultCommand?: VaultCommandRunResult;
   reason?: string;
 }
+
+export interface GardenerRunResult {
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  indexAdded: string[];
+  indexRemoved: string[];
+  filesUpdated: string[];
+  commitSha?: string;
+  reason?: string;
+}
+
+export interface WeeklyReviewRunResult {
+  status: "created" | "skipped" | "error";
+  weekKey: string;
+  reportPath: string;
+  summary: string;
+  journalDaysIncluded: number;
+  openTasksCount: number;
+  commitSha?: string;
+  reason?: string;
+}

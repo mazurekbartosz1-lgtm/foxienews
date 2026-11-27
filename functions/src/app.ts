@@ -41,6 +41,14 @@ import {
   type BuildVaultCommandPlanFn,
   type SelectRelevantFilesFn,
 } from "./services/vaultCommandAgent.js";
+import {
+  runGardenerAgent,
+  type BuildGardenerPlanFn,
+} from "./services/gardenerAgent.js";
+import {
+  runWeeklyReviewAgent,
+  type GenerateWeeklyReviewFn,
+} from "./services/weeklyReviewAgent.js";
 import { normalizeSlug, parseFrontmatter } from "./services/wikiParser.js";
 import {
   extractNewInboxFilesFromPush,
@@ -88,6 +96,8 @@ export interface AppDeps {
   enablePlanningAgent?: boolean;
   selectVaultCommandFiles?: SelectRelevantFilesFn;
   buildVaultCommandPlan?: BuildVaultCommandPlanFn;
+  buildGardenerPlan?: BuildGardenerPlanFn;
+  generateWeeklyReview?: GenerateWeeklyReviewFn;
   now?: () => Date;
 }
 
@@ -659,6 +669,80 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message =
         err instanceof Error ? err.message : "Failed to run vault command agent";
       console.error("[/api/agents/vault-command] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Scheduled / On-demand Gardener Agent: audit wiki/index.md & polish cross-links
+  app.post("/api/agents/gardener", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as { skipLlm?: unknown };
+    const skipLlm = body.skipLlm === true;
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const result = await runGardenerAgent({
+        vaultClient: client,
+        buildPlan: deps.buildGardenerPlan,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        skipLlm,
+        now: getNow,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run gardener agent";
+      console.error("[/api/agents/gardener] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Scheduled / On-demand Weekly Review Agent: generate wiki/dziennik/tydzien-YYYY-Www.md
+  app.post("/api/agents/weekly-review", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as { force?: unknown; weekDate?: unknown };
+    const force = body.force === true;
+    const parsedDate =
+      typeof body.weekDate === "string" && body.weekDate.trim()
+        ? new Date(body.weekDate.trim())
+        : null;
+    if (parsedDate && Number.isNaN(parsedDate.getTime())) {
+      res.status(400).json({ error: "Invalid 'weekDate' format" });
+      return;
+    }
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const result = await runWeeklyReviewAgent({
+        vaultClient: client,
+        generateReview: deps.generateWeeklyReview,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        force,
+        now: parsedDate ? () => parsedDate : getNow,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.status(result.status === "created" ? 201 : 200).json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run weekly review agent";
+      console.error("[/api/agents/weekly-review] Error:", message);
       const status = message.startsWith("Missing ") ? 500 : 502;
       res.status(status).json({ error: message });
     }

@@ -118,3 +118,26 @@ export interface PlanRunResponse {
   commitSha?: string;
   reason?: string;
 }
+
+export interface GardenerRunResponse {
+  ok: boolean;
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  indexAdded: string[];
+  indexRemoved: string[];
+  filesUpdated: string[];
+  commitSha?: string;
+  reason?: string;
+}
+
+export interface WeeklyReviewRunResponse {
+  ok: boolean;
+  status: "created" | "skipped" | "error";
+  weekKey: string;
+  reportPath: string;
+  summary: string;
+  journalDaysIncluded: number;
+  openTasksCount: number;
+  commitSha?: string;
+  reason?: string;
+}
