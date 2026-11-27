@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api/api/$1"
+    },
+    {
+      "source": "/((?!api/|assets/|favicon).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

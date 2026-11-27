@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T06:40:00Z
+updated_at: 2026-11-27T06:55:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -39,6 +39,12 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` ekstrahuje przez `gemini-3.8-flash` wydarzenia do **Google Calendar** (próg pewności `>= 0.75`), zadania do **Google Tasks** (`@default`) oraz tematyczne **Google Listy** (np. `"Lista zakupów"` tworzona przez `ensureTaskList`), dopisuje `## Synchronizacja Google` do notatki `wiki/` w commicie `agent(planner):` i zapisuje ID w `inbox_jobs`. **Zweryfikowano na żywo:** `POST /api/api/agents/plan` dla `wiki/obszary/dom/zakupy.md` utworzył wydarzenie w Kalendarzu (`2026-12-02T12:00:00+01:00`) + zadanie w Google Tasks + sekcję `## Synchronizacja Google` (`f3ef5cd`), a dla `wiki/obszary/auto/toyota.md` utworzył zadanie w Google Tasks + sekcję `## Synchronizacja Google` (`0fd3e0c`).
    - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `18/18` przypadkach (`tsc` + `node --test`).
 
+4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
+   - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).
+   - Ekran logowania Google (`LoginPage.tsx` + `firebase.ts`) z blokadą dostępu poza `ALLOWED_USER_EMAIL` oraz obsługą `auth/unauthorized-domain` dla Vercel.
+   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs` + batch organizer).
+   - Konfiguracja Vercel w [`vercel.json`](../../../vercel.json) i [`web/vercel.json`](../../../web/vercel.json) (rewrite `/api/*` -> Cloud Function `api` + SPA fallback), lokalny gitignorowany `web/.env.local`.
+
 ## Kluczowe decyzje i pułapki
 
 - **Sprzęt Waveshare V2 (`N8R8`):** Pamiętaj o pinach specyficznych dla V2 — I²C `SDA=47`, `SCL=48`, dotyk `PIN_TP_RST=7`, `PIN_TP_INT=21`, zatrzask zasilania `PWR_HOLD` włączany na starcie. Szyna kodeka `PIN_AUDIO_PWR=42` jest **active-LOW** i musi być włączona przed `Wire.begin()`, a wbudowany mikrofon jest analogowy (`MIC1P-MIC1N`, `0x14=0x1A`), nie DMIC. Szczegóły w [[projekty/foxie-notes/sprzet-waveshare-v2|notatce sprzętowej V2]].
@@ -52,13 +58,13 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Etap 2B: Aplikacja webowa (`web/`, `[[projekty/foxie-notes/zadania/etap-2-wiki-webapp]]`):**
-   - Wszystkie 3 fazy chmurowych agentów (Organizator, Researcher PR, Agent Planowania Google Calendar/Tasks/Listy) są ukończone i działają w chmurze.
-   - Następne zadanie z checklisty: zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`) oraz wdrożyć `firestore:rules` i `hosting`.
+1. **Priorytet 1 — Opcja B: Cykliczni agenci Kurator Wiki PR + Przegląd Tygodniowy (`functions/`, `onSchedule`):**
+   - Etap 2B (`web/`) jest gotowy do wdrożenia na **Vercel** (po dodaniu domeny `*.vercel.app` w Firebase Auth -> Authorized domains oraz wpisaniu zmiennych `VITE_*` z `web/.env.example`).
+   - Kolejny krok rozwojowy w backendzie to okresowy **Agent Kurator Wiki („Ogrodnik”)** (raz w tygodniu -> Pull Request proponujący nowe podstrony w `obsydianandwiki` i porządki w `wiki/index.md`) oraz **Agent Przegląd Tygodniowy** (`wiki/dziennik/tydzien-YYYY-Www.md`).
 
 ## Pliki startowe do wczytania w nowym oknie
 
 1. `AGENTS.md` (reguły repozytorium ładowane automatycznie)
 2. `vault/wiki/projekty/foxie-notes/status.md` (ten plik)
-3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-wiki-webapp.md` (aktywny plan aplikacji webowej)
+3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md` (baza agentów do rozbudowy o Kuratora)
 4. `vault/wiki/log.md`
