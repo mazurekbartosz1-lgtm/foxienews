@@ -2,6 +2,7 @@ import type {
   CaptureResponse,
   PlanRunResponse,
   ResearchRunResponse,
+  VaultCommandRunResponse,
 } from "../types";
 import { auth } from "./firebase";
 
@@ -88,5 +89,14 @@ export async function triggerPlanForPage(wikiPath: string): Promise<PlanRunRespo
   return apiFetch<PlanRunResponse>("/api/agents/plan", {
     method: "POST",
     body: JSON.stringify({ wikiPath }),
+  });
+}
+
+export async function triggerVaultCommand(
+  command: string,
+): Promise<VaultCommandRunResponse> {
+  return apiFetch<VaultCommandRunResponse>("/api/agents/vault-command", {
+    method: "POST",
+    body: JSON.stringify({ command }),
   });
 }

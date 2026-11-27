@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T07:25:00Z
+updated_at: 2026-11-27T07:42:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -37,12 +37,13 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Faza 1 — Agent Organizator (`inboxOrganizer.ts` + `github.ts` + `POST /api/agents/organize-inbox`):** Webhook `push` automatycznie wykrywa nowe pliki `raw/inbox/*.md` (z ochroną anti-loop ignorującą commity `agent(` oraz `docs(vault):`), klasyfikuje notatki przez `gemini-3.8-flash` według taksonomii **PARA + Dziennik**, aktualizuje `wiki/`, `wiki/index.md` i `wiki/log.md` oraz przenosi oryginał w tym samym atomowym commicie do `raw/processed/YYYY-MM/`. Idempotencja śledzona transakcyjnie w Firestore (`inbox_jobs`).
    - **Faza 2 — Agent Researcher PR (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` Organizator automatycznie uruchamia Researchera, który wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`, bez `responseMimeType: "application/json"`), zapisuje bezkonfliktowy raport `wiki/pomysly/<slug>/research.md` (z zadaniami `- [ ]` i źródłami z `groundingMetadata`) na osobnej gałęzi `agent/research-<slug>` i otwiera **Pull Request** do akceptacji użytkownika w `obsydianandwiki` (z deduplikacją otwartych PR i obsługą kolizji gałęzi `422`). **PR #1 został scalony** (`obsydianandwiki/pull/1`, `db6393d`), a `pomysly/bateria-lipo-obudowa-waveshare/research` zsynchronizował się automatycznie do Firestore.
    - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` najpierw automatycznie wyszukuje brakujące dane wykonawcze (numer telefonu, adres, godziny, link do walidacji) przez Google Search grounding (`enrichActionableContextWithGemini`), a następnie konsoliduje sprawę w **jedno gotowe do wykonania zadanie** (zero rozbitych meta-zadań typu „znajdź numer”) i ewentualnie jedno wydarzenie w **Google Calendar** (próg pewności `>= 0.75`, z adresem w `location` i zebranymi danymi w opisie), obsługuje **Google Tasks** (`@default`) oraz tematyczne **Google Listy**, bez duplikowania sekcji `## Synchronizacja Google` w `wiki/`.
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `19/19` przypadkach (`tsc` + `node --test`).
+   - **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + intencja `vault-command`):** Wykonuje polecenia reorganizacji repozytorium Obsidian (np. tworzenie podfolderów tematycznych i wydzielanie stron `wiki/`, scalanie powiązanych notatek z `wiki/` i `raw/processed/`). Posiada twarde guardraile blokujące modyfikację/usunięcie plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), deterministycznie aktualizuje `wiki/index.md` i `wiki/log.md` oraz commituje atomowo z prefiksem `agent(curator):`. Zweryfikowano na żywo utworzeniem `wiki/obszary/zdrowie/samopoczucie.md` (commit `6a6300b`, zsynchronizowane do `GET /api/api/wiki/index`).
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `23/23` przypadkach (`tsc` + `node --test`).
 
 4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
    - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).
    - Ekran logowania Google (`LoginPage.tsx` + `firebase.ts`) z blokadą dostępu poza `ALLOWED_USER_EMAIL` oraz obsługą `auth/unauthorized-domain` dla Vercel.
-   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs` + batch organizer).
+   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs`, batch organizer oraz formularz **Polecenie dla Kuratora Wiki** z klikalnymi wynikowymi `[[slug]]`).
    - Konfiguracja Vercel w [`vercel.json`](../../../vercel.json) i [`web/vercel.json`](../../../web/vercel.json) (rewrite `/api/*` -> Cloud Function `api` + SPA fallback), lokalny gitignorowany `web/.env.local`.
 
 ## Kluczowe decyzje i pułapki

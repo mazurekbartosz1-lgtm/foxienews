@@ -19,6 +19,11 @@ import {
   type ExtractPlanFn,
 } from "./planningAgent.js";
 import { runResearchAgent, type GenerateResearchReportFn } from "./researchAgent.js";
+import {
+  runVaultCommandAgent,
+  type BuildVaultCommandPlanFn,
+  type SelectRelevantFilesFn,
+} from "./vaultCommandAgent.js";
 import { parseFrontmatter } from "./wikiParser.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
 
@@ -61,6 +66,7 @@ const VALID_INTENTS = new Set<NoteIntent>([
   "todo",
   "research-idea",
   "journal",
+  "vault-command",
 ]);
 
 const VALID_INDEX_SECTIONS = new Set<IndexSectionName>([
@@ -281,12 +287,13 @@ REGUŁY DECYZJI:
    - \`wiki/zasoby/<temat>.md\` (wiedza ogólna, notatki referencyjne)
    - \`wiki/dziennik/${params.noteDate}.md\` (obserwacje dnia, samopoczucie, krótkie zapiski dnia ORAZ nagrania testowe)
 2. Jeśli notatka jest testem dyktafonu, konfiguracji lub spacerowym testem nagrania, ustaw \`isTestNote: true\`, \`intent: "journal"\`, \`targetPath: "wiki/dziennik/${params.noteDate}.md"\` i dodaj tag \`test\`.
+   Jeśli notatka jest wyraźnym poleceniem zmiany struktury lub porządkowania repozytorium Obsidian / folderów / stron wiki (np. "zrób folder zdrowie i samopoczucie", "uporządkuj notatki o X jako oddzielne wiki", "przenieś wpisy o Y do Z"), ustaw \`intent: "vault-command"\`, \`targetPath: "wiki/dziennik/${params.noteDate}.md"\` (zostanie obsłużone bezpośrednio przez Kuratora Wiki bez dopisywania śmieciowego wpisu do dziennika).
 3. Nigdy nie wybieraj chronionych plików: \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/projekty/foxie-notes/status.md\`, \`wiki/projekty/foxie-notes/index.md\`.
 4. Zachowaj wszystkie konkretne fakty, godziny, kwoty, nazwy i zadania (z \`@due(YYYY-MM-DD)\` jeśli padła konkretna data). Konsoliduj powiązane kroki jednej sprawy w JEDNO konkretne zadanie — nie rozbijaj pojedynczej czynności na osobne meta-zadanie typu "znaleźć numer/sprawdzić adres" i właściwe wykonanie.
 5. \`contentMarkdown\` nie może zawierać YAML frontmattera ani nagłówka H1 (\`# ...\`) ani sekcji \`## Zadania\` (zadania podaj wyłącznie w polu \`tasks\`).
 6. Zwróć WYŁĄCZNIE poprawny obiekt JSON o polach:
 {
-  "intent": "knowledge" | "project" | "plan-calendar" | "todo" | "research-idea" | "journal",
+  "intent": "knowledge" | "project" | "plan-calendar" | "todo" | "research-idea" | "journal" | "vault-command",
   "targetPath": "wiki/...",
   "title": "Czytelny tytuł strony po polsku",
   "summary": "1-2 krótkie zdania pod e-ink (max 160 znaków)",
@@ -780,6 +787,8 @@ export async function organizeInboxFile(params: {
   extractPlan?: ExtractPlanFn;
   enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
+  selectVaultCommandFiles?: SelectRelevantFilesFn;
+  buildVaultCommandPlan?: BuildVaultCommandPlanFn;
   vaultPrefix?: string;
   now?: () => Date;
   force?: boolean;
@@ -871,6 +880,62 @@ export async function organizeInboxFile(params: {
       noteDate,
     });
 
+    const processedRelativePath = buildProcessedPath(inboxRelative, yearMonth);
+    const processedRepoPath = joinRepoPath(params.vaultPrefix, processedRelativePath);
+
+    if (decision.intent === "vault-command") {
+      const { body: commandBody } = parseFrontmatter(rawMarkdown);
+      const commandText = commandBody.trim() || rawMarkdown.trim();
+      const vaultCommandResult = await runVaultCommandAgent({
+        command: commandText,
+        vaultClient: params.vaultClient,
+        selectFiles: params.selectVaultCommandFiles,
+        buildPlan: params.buildVaultCommandPlan,
+        vaultPrefix: params.vaultPrefix,
+        extraChanges: [
+          { path: processedRepoPath, content: rawMarkdown },
+          { path: params.inboxRepoPath, content: null },
+        ],
+        now: getNow,
+      });
+
+      if (vaultCommandResult.status !== "executed") {
+        throw new Error(
+          vaultCommandResult.reason ??
+            vaultCommandResult.summary ??
+            "VaultCommandAgent did not execute",
+        );
+      }
+
+      const primaryTargetPath = vaultCommandResult.filesWritten[0]
+        ? joinRepoPath(params.vaultPrefix, vaultCommandResult.filesWritten[0])
+        : undefined;
+
+      await params.store.completeInboxJob({
+        id: "",
+        inboxPath: params.inboxRepoPath,
+        processedPath: processedRepoPath,
+        status: "done",
+        intent: "vault-command",
+        ...(primaryTargetPath ? { targetPath: primaryTargetPath } : {}),
+        ...(vaultCommandResult.commitSha ? { commitSha: vaultCommandResult.commitSha } : {}),
+        vaultCommandSummary: vaultCommandResult.summary,
+        vaultCommandFiles: vaultCommandResult.filesWritten,
+        createdAt,
+        updatedAt: nowIso,
+      });
+
+      return {
+        inboxPath: params.inboxRepoPath,
+        status: "processed",
+        intent: "vault-command",
+        ...(primaryTargetPath ? { targetPath: primaryTargetPath } : {}),
+        processedPath: processedRepoPath,
+        ...(vaultCommandResult.commitSha ? { commitSha: vaultCommandResult.commitSha } : {}),
+        vaultCommand: vaultCommandResult,
+      };
+    }
+
     const targetRelativePath = sanitizeTargetPath({
       rawTargetPath: decision.targetPath,
       noteDate,
@@ -878,8 +943,6 @@ export async function organizeInboxFile(params: {
       title: decision.title,
     });
     const targetRepoPath = joinRepoPath(params.vaultPrefix, targetRelativePath);
-    const processedRelativePath = buildProcessedPath(inboxRelative, yearMonth);
-    const processedRepoPath = joinRepoPath(params.vaultPrefix, processedRelativePath);
 
     const existingTargetMd = existingWikiPaths.includes(targetRelativePath)
       ? await params.vaultClient.fetchFile(targetRepoPath)
@@ -1083,6 +1146,8 @@ export async function organizePendingInboxFiles(params: {
   extractPlan?: ExtractPlanFn;
   enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
+  selectVaultCommandFiles?: SelectRelevantFilesFn;
+  buildVaultCommandPlan?: BuildVaultCommandPlanFn;
   vaultPrefix?: string;
   paths?: string[];
   limit?: number;
@@ -1131,7 +1196,10 @@ export async function organizePendingInboxFiles(params: {
       enableResearchAgent: params.enableResearchAgent,
       googleClient: params.googleClient,
       extractPlan: params.extractPlan,
+      enrichContext: params.enrichContext,
       enablePlanningAgent: params.enablePlanningAgent,
+      selectVaultCommandFiles: params.selectVaultCommandFiles,
+      buildVaultCommandPlan: params.buildVaultCommandPlan,
       vaultPrefix: params.vaultPrefix,
       now: params.now,
       force: params.force,

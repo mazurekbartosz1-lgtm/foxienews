@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T07:25:00Z
+updated_at: 2026-11-27T07:42:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + zakładka `Agenci` w `web/`):**
+  - Dodano obsługę poleceń reorganizacji repozytorium Obsidian (zarówno przez intencję `vault-command` w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) dla notatek głosowych/webowych, jak i bezpośrednio przez `POST /api/agents/vault-command` w [`app.ts`](../../../functions/src/app.ts) oraz formularz „Polecenie dla Kuratora Wiki” w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx)).
+  - Dodano guardraile blokujące modyfikacje plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), atomowe commity `agent(curator):` z automatyczną aktualizacją `wiki/index.md` i `wiki/log.md` oraz testy jednostkowe w [`vaultCommandAgent.test.ts`](../../../functions/src/__tests__/vaultCommandAgent.test.ts) (`23/23` pass, `web` build OK).
+  - Wdrożono Cloud Functions (`firebase deploy --only functions --force`) i wykonano żywy test polecenia: utworzono `wiki/obszary/zdrowie/samopoczucie.md` (commit `6a6300b`, zsynchronizowane do `GET /api/api/wiki/index`).
 - **Konsolidacja zadań i automatyczne wzbogacanie faktami (Google Search grounding) w Agencie Planowania:**
   - Dodano `enrichActionableContextWithGemini` w [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts) (wyszukuje numery telefonów, adresy, godziny i linki walidacyjne przed utworzeniem zadania), zaktualizowano prompty w [`gemini.ts`](../../../functions/src/services/gemini.ts), [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) i [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts), aby scalać powiązane kroki w **jedno** gotowe do wykonania zadanie zamiast rozbitych meta-zadań.
   - Poprawiono scalanie sekcji `## Synchronizacja Google` w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) oraz [`planningAgent.ts`](../../../functions/src/services/planningAgent.ts) (brak duplikatów nagłówka). Testy `npm --prefix functions test`: `19/19`.

@@ -39,7 +39,8 @@ export type NoteIntent =
   | "plan-calendar"
   | "todo"
   | "research-idea"
-  | "journal";
+  | "journal"
+  | "vault-command";
 
 export interface InboxJobDoc {
   id: string;
@@ -57,6 +58,8 @@ export interface InboxJobDoc {
   googleTaskIds?: string[];
   googleListsUsed?: string[];
   planningStatus?: "synced" | "skipped" | "error";
+  vaultCommandSummary?: string;
+  vaultCommandFiles?: string[];
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +81,16 @@ export interface ResearchRunResponse {
   reportPath?: string;
   prNumber?: number;
   prUrl?: string;
+  reason?: string;
+}
+
+export interface VaultCommandRunResponse {
+  ok: boolean;
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  filesWritten: string[];
+  filesDeleted?: string[];
+  commitSha?: string;
   reason?: string;
 }
 

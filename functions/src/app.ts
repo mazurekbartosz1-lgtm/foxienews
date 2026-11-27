@@ -36,6 +36,11 @@ import {
   runResearchAgent,
   type GenerateResearchReportFn,
 } from "./services/researchAgent.js";
+import {
+  runVaultCommandAgent,
+  type BuildVaultCommandPlanFn,
+  type SelectRelevantFilesFn,
+} from "./services/vaultCommandAgent.js";
 import { normalizeSlug, parseFrontmatter } from "./services/wikiParser.js";
 import {
   extractNewInboxFilesFromPush,
@@ -81,6 +86,8 @@ export interface AppDeps {
   extractPlan?: ExtractPlanFn;
   enrichContext?: EnrichActionableContextFn;
   enablePlanningAgent?: boolean;
+  selectVaultCommandFiles?: SelectRelevantFilesFn;
+  buildVaultCommandPlan?: BuildVaultCommandPlanFn;
   now?: () => Date;
 }
 
@@ -366,7 +373,10 @@ export function createApp(deps: AppDeps = {}): express.Express {
               enableResearchAgent: deps.enableResearchAgent,
               googleClient: deps.googleClient,
               extractPlan: deps.extractPlan,
+              enrichContext: deps.enrichContext,
               enablePlanningAgent: deps.enablePlanningAgent,
+              selectVaultCommandFiles: deps.selectVaultCommandFiles,
+              buildVaultCommandPlan: deps.buildVaultCommandPlan,
               vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
               now: getNow,
             });
@@ -423,7 +433,10 @@ export function createApp(deps: AppDeps = {}): express.Express {
         enableResearchAgent: deps.enableResearchAgent,
         googleClient: deps.googleClient,
         extractPlan: deps.extractPlan,
+        enrichContext: deps.enrichContext,
         enablePlanningAgent: deps.enablePlanningAgent,
+        selectVaultCommandFiles: deps.selectVaultCommandFiles,
+        buildVaultCommandPlan: deps.buildVaultCommandPlan,
         vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
         paths,
         limit,
@@ -607,6 +620,45 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message =
         err instanceof Error ? err.message : "Failed to run planning agent";
       console.error("[/api/agents/plan] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Curator Agent: Execute natural-language vault/wiki reorganization commands
+  app.post("/api/agents/vault-command", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as { command?: unknown };
+    const command = typeof body.command === "string" ? body.command.trim() : "";
+
+    if (!command) {
+      res.status(400).json({ error: "Missing non-empty 'command'" });
+      return;
+    }
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const result = await runVaultCommandAgent({
+        command,
+        vaultClient: client,
+        selectFiles: deps.selectVaultCommandFiles,
+        buildPlan: deps.buildVaultCommandPlan,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        now: getNow,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run vault command agent";
+      console.error("[/api/agents/vault-command] Error:", message);
       const status = message.startsWith("Missing ") ? 500 : 502;
       res.status(status).json({ error: message });
     }

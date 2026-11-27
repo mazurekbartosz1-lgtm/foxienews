@@ -58,7 +58,8 @@ export type NoteIntent =
   | "plan-calendar"
   | "todo"
   | "research-idea"
-  | "journal";
+  | "journal"
+  | "vault-command";
 
 export type InboxJobStatus = "processing" | "done" | "error";
 
@@ -78,6 +79,8 @@ export interface InboxJobDoc {
   googleTaskIds?: string[];
   googleListsUsed?: string[];
   planningStatus?: "synced" | "skipped" | "error";
+  vaultCommandSummary?: string;
+  vaultCommandFiles?: string[];
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -122,6 +125,15 @@ export interface PlanningRunResult {
   reason?: string;
 }
 
+export interface VaultCommandRunResult {
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  filesWritten: string[];
+  filesDeleted: string[];
+  commitSha?: string;
+  reason?: string;
+}
+
 export interface OrganizeInboxResult {
   inboxPath: string;
   status: "processed" | "skipped" | "error";
@@ -131,5 +143,6 @@ export interface OrganizeInboxResult {
   commitSha?: string;
   research?: ResearchRunResult;
   planning?: PlanningRunResult;
+  vaultCommand?: VaultCommandRunResult;
   reason?: string;
 }
