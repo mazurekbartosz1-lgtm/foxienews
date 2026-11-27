@@ -1,11 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-26T18:55:00Z
+updated_at: 2026-11-27T06:40:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
+
+## 2026-11-27
+- **Faza 3 chmurowych agentów zakończona — Google OAuth2 + żywy test E2E (Calendar + Tasks + Listy):**
+  - Wgrano sekrety `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` do Firebase Secret Manager, podpięto je w [`index.ts`](../../../functions/src/index.ts), włączono **Google Tasks API** i **Google Calendar API** w projekcie `gen-lang-client-0751515487`, zweryfikowano testy (`18/18`) i wdrożono funkcję `api`.
+  - Przeprowadzono żywy test `POST /api/api/agents/plan` na notatkach `wiki/obszary/dom/zakupy.md` (utworzono wydarzenie w Google Calendar `2026-12-02T12:00:00+01:00` + zadanie w Google Tasks + commit `f3ef5cd`) oraz `wiki/obszary/auto/toyota.md` (utworzono zadanie w Google Tasks + commit `0fd3e0c`). Przełączono priorytet w [`status.md`](../../../vault/wiki/projekty/foxie-notes/status.md) na **Etap 2B (`web/`)**.
 
 ## 2026-11-26
 - **Merge PR #1, optymalizacja baterii Waveshare V2 (`COM5`) oraz kod Agenta Planowania (Calendar + Tasks + Google Listy):**

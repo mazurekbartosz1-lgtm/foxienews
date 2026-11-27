@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-26T18:55:00Z
+updated_at: 2026-11-27T06:40:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -28,7 +28,7 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 3. **Backend Firebase (`functions/`, Etap 1B + Etap 2A + Agenci Faza 1, 2 i 3) — WDROŻONY W CHMURZE (`gen-lang-client-0751515487`)**
    - Funkcja Cloud Functions v2 `api` (`europe-west1`, Node.js 22, timeout `180 s`) wdrożona na `https://europe-west1-gen-lang-client-0751515487.cloudfunctions.net/api` wraz z regułami `firestore.rules` (w tym `inbox_jobs` read-only dla `ALLOWED_USER_EMAIL`) i zweryfikowana na żywo (`GET /api/api/health` -> `200 {"ok":true,"service":"foxie-api"}`).
-   - Wszystkie 5 sekretów (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`) zapisane w Firebase Secret Manager oraz lokalnie w gitignorowanym `functions/.secret.local`; docelowy vault chmury przełączony na prywatne repo **`GITHUB_OWNER=mazurekbartosz1-lgtm`, `GITHUB_REPO=obsydianandwiki`**, `GITHUB_VAULT_PREFIX=` (`raw/inbox/`), `GEMINI_MODEL=gemini-3.8-flash` w `functions/.env`; `ALLOWED_USER_EMAIL` ustawione w `firestore.rules`.
+   - Wszystkie 8 sekretów (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DEVICE_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_USER_EMAIL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`) zapisane w Firebase Secret Manager, podpięte w `functions/src/index.ts` oraz lokalnie w gitignorowanym `functions/.secret.local`; docelowy vault chmury przełączony na prywatne repo **`GITHUB_OWNER=mazurekbartosz1-lgtm`, `GITHUB_REPO=obsydianandwiki`**, `GITHUB_VAULT_PREFIX=` (`raw/inbox/`), `GEMINI_MODEL=gemini-3.8-flash` w `functions/.env`; `ALLOWED_USER_EMAIL` ustawione w `firestore.rules`.
    - Automatyczna synchronizacja dokumentacji (`vault/SCHEMA.md` + `vault/wiki/projekty/foxie-notes/**`) do prywatnego `obsydianandwiki` przez `npm run sync:vault` ([`scripts/sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs)) jako pojedynczy atomowy commit bez naruszania `raw/` ani zdalnych `wiki/index.md` i `wiki/log.md`.
    - `firmware/include/config.h` (chronione przez `.gitignore`) zaktualizowane o docelowy URL chmurowy i `DEVICE_API_KEY`.
    - ESM TypeScript (`NodeNext`, `@google/genai@^3.6.1`, `@octokit/rest@^22.0.1`), `POST /api/capture` (nagranie audio / tekst -> Gemini 3.8 Flash z obsługą `@due(YYYY-MM-DD)` -> commit Markdown do `raw/inbox/`).
@@ -36,7 +36,7 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - **Etap 2A + Webhook GitHub (`obsydianandwiki`, hook `717206121`):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
    - **Faza 1 — Agent Organizator (`inboxOrganizer.ts` + `github.ts` + `POST /api/agents/organize-inbox`):** Webhook `push` automatycznie wykrywa nowe pliki `raw/inbox/*.md` (z ochroną anti-loop ignorującą commity `agent(` oraz `docs(vault):`), klasyfikuje notatki przez `gemini-3.8-flash` według taksonomii **PARA + Dziennik**, aktualizuje `wiki/`, `wiki/index.md` i `wiki/log.md` oraz przenosi oryginał w tym samym atomowym commicie do `raw/processed/YYYY-MM/`. Idempotencja śledzona transakcyjnie w Firestore (`inbox_jobs`).
    - **Faza 2 — Agent Researcher PR (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` Organizator automatycznie uruchamia Researchera, który wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`, bez `responseMimeType: "application/json"`), zapisuje bezkonfliktowy raport `wiki/pomysly/<slug>/research.md` (z zadaniami `- [ ]` i źródłami z `groundingMetadata`) na osobnej gałęzi `agent/research-<slug>` i otwiera **Pull Request** do akceptacji użytkownika w `obsydianandwiki` (z deduplikacją otwartych PR i obsługą kolizji gałęzi `422`). **PR #1 został scalony** (`obsydianandwiki/pull/1`, `db6393d`), a `pomysly/bateria-lipo-obudowa-waveshare/research` zsynchronizował się automatycznie do Firestore.
-   - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** Zaimplementowany i przetestowany (`planningAgent.test.ts`). Po klasyfikacji `plan-calendar` lub `todo` ekstrahuje przez `gemini-3.8-flash` wydarzenia do **Google Calendar** (próg pewności `>= 0.75`), zadania do **Google Tasks** (`@default`) oraz tematyczne **Google Listy** (np. `"Lista zakupów"` tworzona przez `ensureTaskList`), dopisuje `## Synchronizacja Google` do notatki `wiki/` w commicie `agent(planner):` i zapisuje ID w `inbox_jobs`. Gdy brak sekretów Google OAuth2, bezpiecznie zwraca `skipped` (`google_oauth_not_configured`). Skrypt [`scripts/google-oauth-setup.mjs`](../../../scripts/google-oauth-setup.mjs) przygotowany do jednorazowego wygenerowania tokenu przez użytkownika.
+   - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` ekstrahuje przez `gemini-3.8-flash` wydarzenia do **Google Calendar** (próg pewności `>= 0.75`), zadania do **Google Tasks** (`@default`) oraz tematyczne **Google Listy** (np. `"Lista zakupów"` tworzona przez `ensureTaskList`), dopisuje `## Synchronizacja Google` do notatki `wiki/` w commicie `agent(planner):` i zapisuje ID w `inbox_jobs`. **Zweryfikowano na żywo:** `POST /api/api/agents/plan` dla `wiki/obszary/dom/zakupy.md` utworzył wydarzenie w Kalendarzu (`2026-12-02T12:00:00+01:00`) + zadanie w Google Tasks + sekcję `## Synchronizacja Google` (`f3ef5cd`), a dla `wiki/obszary/auto/toyota.md` utworzył zadanie w Google Tasks + sekcję `## Synchronizacja Google` (`0fd3e0c`).
    - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `18/18` przypadkach (`tsc` + `node --test`).
 
 ## Kluczowe decyzje i pułapki
@@ -52,14 +52,13 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Dokończenie konfiguracji OAuth2 dla Fazy 3 (`[[projekty/foxie-notes/zadania/etap-2-agenci-chmurowi]]`) (PRZED `web/`):**
-   - Kod Agenta Planowania (Calendar + Tasks + Google Listy) jest gotowy i wdrożony. Pozostała jednorazowa autoryzacja OAuth2 konta Google użytkownika (`node scripts/google-oauth-setup.mjs`), wgranie 3 sekretów (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`) do Firebase Secret Manager, dopisanie ich do `secrets: [...]` w `functions/src/index.ts`, redeploy i żywy test głosówki.
-2. **Priorytet 2 (po teście E2E Fazy 3) — Etap 2B: Aplikacja webowa (`web/`, `[[projekty/foxie-notes/zadania/etap-2-wiki-webapp]]`):**
-   - Zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`) oraz wdrożyć `firestore:rules` i `hosting`.
+1. **Priorytet 1 — Etap 2B: Aplikacja webowa (`web/`, `[[projekty/foxie-notes/zadania/etap-2-wiki-webapp]]`):**
+   - Wszystkie 3 fazy chmurowych agentów (Organizator, Researcher PR, Agent Planowania Google Calendar/Tasks/Listy) są ukończone i działają w chmurze.
+   - Następne zadanie z checklisty: zbudować aplikację React/Vite w `web/` (Firebase Auth z blokadą `ALLOWED_USER_EMAIL`, minimalistyczny papierowy układ: „Do zrobienia” z Firestore + szybkie dodawanie na `POST /api/capture`, oraz „Wiki” z `wiki_meta/index`, wyszukiwarką i `[[wikilinks]]`) oraz wdrożyć `firestore:rules` i `hosting`.
 
 ## Pliki startowe do wczytania w nowym oknie
 
 1. `AGENTS.md` (reguły repozytorium ładowane automatycznie)
 2. `vault/wiki/projekty/foxie-notes/status.md` (ten plik)
-3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-agenci-chmurowi.md` (aktywny plan chmurowych agentów)
+3. `vault/wiki/projekty/foxie-notes/zadania/etap-2-wiki-webapp.md` (aktywny plan aplikacji webowej)
 4. `vault/wiki/log.md`
