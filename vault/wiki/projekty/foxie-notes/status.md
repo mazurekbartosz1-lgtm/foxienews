@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T10:26:00Z
+updated_at: 2026-11-27T12:00:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -18,7 +18,8 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Eksporter assetów C++ (`npm --prefix simulator run export:cpp`) generuje `firmware/include/ui_assets.h` (19 sprite'ów / ikon, `20318 bytes PROGMEM`).
 
 2. **Firmware ESP32-S3 (`firmware/`) — Waveshare ESP32-S3-Touch-ePaper-1.54 V2 (`COM5`)**
-   - Kod zaktualizowany i skompilowany (PlatformIO `waveshare-esp32s3-epaper-154-v2`: `RAM 17.1%`, `Flash 36.8%`; gotowy do wgrania na `COM5` po podpięciu płytki).
+   - Płytka jest sflashowana najnowszym firmware (PlatformIO `waveshare-esp32s3-epaper-154-v2`: `RAM 17.1%` / `55996 B`, `Flash 36.8%` / `1230187 B`, zweryfikowano na `COM5`: `state=0 wifi=3 cpuMhz=80 batMv=4044 batPct=82 audioReady=1 sdMounted=1 psramFree=4507704 stackFree=11984`).
+   - **Szybkie 3-stanowe wybudzanie (`Sleeping -> WakingUp -> Recording/Ready`) i nieblokujące Wi-Fi (`main.cpp`):** po wybudzeniu `EXT1` z `deep_sleep` odtwarzany jest bufor `0x26` przez `nextPageToPrevious()` i od razu rysowany stan `WakingUp` z ikoną `ICON_WAKE_16` i loaderem przez partial refresh (`~439 ms`, bez 3× mrugania ekranu); wybudzenie przyciskiem `BOOT` wchodzi natychmiast w `Recording` bez czekania na Wi-Fi, a wybudzenie `PWR`/dotykiem lub zimny start przechodzi w `Ready` z asynchronicznym łączeniem Wi-Fi w tle (`startWifiConnectAsync` / `pollWifiConnectAsync`, `abortWifiConnectAsync` przy starcie nagrywania). Przejścia `Recording -> Uploading -> Saved / Error -> Ready` używają partial refreshy (z pełnym czyszczeniem co `EPD_FULL_REFRESH_EVERY = 30`).
    - Wi-Fi provisioning przez Captive Portal + NVS (`Preferences`) oraz opcjonalny lokalny fallback w gitignorowanym `firmware/include/config.h` (lokalna nazwa miasta pogodowego konfigurowalna w portalu). Gdy SSID jest zapisane, a Wi-Fi chwilowo niedostępne, urządzenie wchodzi w tryb offline `Ready` (gotowe do nagrywania na MicroSD), zamiast wymuszać ekran QR. Wywołanie ekranu QR z przycisków fizycznych zostało całkowicie wyłączone (`onBootLongPress()` ignoruje przytrzymanie `BOOT`). Przy `reason=208` (PMF comeback na routerze) automatycznie ponawia próbę po `2.5 s`, a przejście paska stanu na `BRAK WI-FI` ma `12 s` debounce i odświeża tylko pasek stanu (`renderStatusBarPartial`) bez pełnych mrugnięć ekranu.
    - Zegar 24h przez NTP (`CET-1CEST,M3.5.0,M10.5.0/3`) oraz pogoda Open-Meteo (domyślnie **Trąbki Wielkie**, odświeżana co 30 min na Wi-Fi i zapisywana w NVS `w_valid`/`w_temp`/`w_code`, aby nie znikała po restarcie).
    - **Audio ES8311 + WAV w PSRAM (`audio_recorder.h/.cpp`):** I²C (`0x18`, wykryto `ID=0x8311 rev=0x01`) + I²S Master RX (`driver/i2s_std.h`, 16 kHz / 16-bit / mono) z buforem do **120 s** (`MAX_DURATION_SEC = 120`, `3840044 B` w 8 MB OPI PSRAM, `HTTP_RESPONSE_TIMEOUT_MS = 60000`) i dedykowanym taskiem FreeRTOS; szyna audio `PIN_AUDIO_PWR` oraz I²C są automatycznie usypiane po inicjalizacji i po każdym nagraniu (`wakeCodec()` / `powerDownCodec()`).
@@ -62,10 +63,10 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Flash Paczki 2 na Waveshare V2 (`COM5`) oraz szybkie wybudzanie + Beep ES8311 (`firmware/`):**
-   - Checklista w [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|etap-3-ux-i-stabilnosc.md]] (Paczka 1 + `inboxSweeper` + Paczka 2 zakończone w kodzie i wdrożone w chmurze; build firmware `RAM 17.1%`, `Flash 36.8%` gotowy do wgrania po podłączeniu płytki do `COM5`).
-   - Kolejne prace: wdrożyć 3 czytelne stany wybudzania (`Sleeping -> Wake up z loaderem -> Recording`) bez 3× mrugania ekranu oraz sygnał dźwiękowy (`beep`) przez kodek ES8311/NS4150B po zakończeniu nagrania.
-   - Następnie: cykliczni agenci `onSchedule` w `functions/` (Kurator „Ogrodnik” + Przegląd Tygodniowy `wiki/dziennik/tydzien-YYYY-Www.md`) oraz projekt pomysłu `[[pomysly/agent-ai-dla-developera]]`.
+1. **Priorytet 1 — Sygnał dźwiękowy `beep` ES8311 (`firmware/`) lub Cykliczni Agenci (`functions/`):**
+   - Checklista w [[projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc|etap-3-ux-i-stabilnosc.md]] (Paczka 1 + `inboxSweeper` + Paczka 2 + szybkie wybudzanie `3 stany + async Wi-Fi` zakończone i zweryfikowane na `COM5`).
+   - Kolejne kroki w `firmware/`: krótki sygnał dźwiękowy (`beep`) przez kodek ES8311 + wzmacniacz NS4150B (`DOUT=45`, `PA_CTRL=46`) po zakończeniu nagrania.
+   - Równolegle w `functions/`: cykliczni agenci `onSchedule` (Kurator „Ogrodnik” + Przegląd Tygodniowy `wiki/dziennik/tydzien-YYYY-Www.md`) oraz pomysł `[[pomysly/agent-ai-dla-developera]]`.
 
 ## Pliki startowe do wczytania w nowym oknie
 

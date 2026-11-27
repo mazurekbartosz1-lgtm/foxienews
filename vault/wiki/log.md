@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T10:26:00Z
+updated_at: 2026-11-27T12:00:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Szybkie 3-stanowe wybudzanie (`Sleeping -> WakingUp -> Recording/Ready`) i nieblokujące Wi-Fi (`firmware/` + `COM5`):**
+  - W [`main.cpp`](../../../firmware/src/main.cpp) dodano stan `DeviceState::WakingUp` z ikoną `ICON_WAKE_16` i 3-segmentowym loaderem, natychmiastowe wybudzanie `EXT1` przez partial refresh (`nextPageToPrevious()` ~`439 ms` bez 3× mrugania ekranu), bezpośrednie wejście w `Recording` przy wybudzeniu przyciskiem `BOOT` oraz nieblokujące łączenie Wi-Fi w tle (`startWifiConnectAsync`, `pollWifiConnectAsync`, `abortWifiConnectAsync`).
+  - Skompilowano (`RAM 17.1%` / `55996 B`, `Flash 36.8%` / `1230187 B`), wgrano na `COM5` (`15.58 s`) i zweryfikowano na żywo (`_Update_Part: 439 ms`, `Wi-Fi connected! -54 dBm`, `NTP synced: 12:59`, `state=0 wifi=3 cpuMhz=80 audioReady=1 sdMounted=1 psramFree=4507704 stackFree=11984`).
 - **Auto-czyszczenie `inboxSweeper` (`onSchedule`) + Firmware Paczka 2 (limit `120 s`, brak QR z przycisków, `SYNC 1/5`, bilans baterii):**
   - Dodano cykliczną funkcję [`inboxSweeper`](../../../functions/src/index.ts) (`every 5 minutes`, `europe-west1`) oraz śledzenie pola `attempts` w [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) / [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) z limitem `maxAttempts = 3` (poison-pill cap), żeby osierocone pliki `raw/inbox/` czyściły się automatycznie bez ręcznej ingerencji. Testy `npm --prefix functions test`: `25/25` pass; wdrożono `api` oraz `inboxSweeper` w Firebase (`cloudscheduler.googleapis.com` włączony).
   - Zrealizowano Paczkę 2 w `firmware/`: wydłużono limit nagrywania do `120 s` ([`audio_recorder.h`](../../../firmware/include/audio_recorder.h)) i timeout HTTP do `60 s` ([`capture_client.cpp`](../../../firmware/src/capture_client.cpp)), wyłączono wywołanie ekranu QR Wi-Fi z przycisków fizycznych (`onBootLongPress()` w [`main.cpp`](../../../firmware/src/main.cpp)), dodano ikonę synchronizacji `ICON_SYNC_16` i licznik postępu `SYNC 1/5` (`SYNC 1 z 5`) podczas opróżniania kolejki MicroSD oraz dopisano bilans zużycia baterii do [`sprzet-waveshare-v2.md`](../../../vault/wiki/projekty/foxie-notes/sprzet-waveshare-v2.md). Build PlatformIO przeszedł (`RAM 17.1%`, `Flash 36.8%`; płytka nie była podłączona do `COM5`).

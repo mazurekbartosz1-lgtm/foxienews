@@ -1,7 +1,7 @@
 ---
 title: Waveshare ESP32-S3-Touch-ePaper-1.54 V2
 slug: projekty/foxie-notes/sprzet-waveshare-v2
-updated_at: 2026-11-27T10:25:00Z
+updated_at: 2026-11-27T12:00:00Z
 tags: [sprzet, waveshare, esp32-s3, pinout]
 ---
 
@@ -30,6 +30,7 @@ Notatka referencyjna sprzętu dla [[projekty/foxie-notes/index|Foxie Notes]] (zg
   - **Power-gating ES8311 (`audio_recorder.cpp`):** szyna audio `PIN_AUDIO_PWR` oraz magistrala I²C są wyłączone w spoczynku i budzone wyłącznie na czas nagrywania (`wakeCodec()` / `powerDownCodec()`).
   - **On-demand MicroSD (`sd_queue.cpp`):** `SD_MMC` jest montowane tylko podczas zapisu/odczytu kolejki i odmontowywane po operacji (`suspend()`).
   - **Idle CPU + Wi-Fi Modem Sleep + e-Paper HV OFF:** w stanie `Ready` MCU pracuje na **80 MHz** z `WiFi.setSleep(WIFI_PS_MAX_MODEM)` (w trybie offline `WiFi.mode(WIFI_OFF)` z próbą co `60 s`), po każdym odświeżeniu ekranu wyłączana jest pompa HV (`display.powerOff()`), a odczyt napięcia baterii (`readBatteryMilliVolts()`) uśrednia 8 próbek ADC. Przy aktywnym transferze HTTPS/pogody profil przełącza się na `240 MHz` + `WIFI_PS_NONE`.
+  - **Szybkie 3-stanowe wybudzanie (`Sleeping -> WakingUp -> Recording/Ready`) i nieblokujące Wi-Fi:** przy wybudzeniu `EXT1` z `deep_sleep` kontroler SSD1681 odtwarza bufor `0x26` przez `nextPageToPrevious()`, pokazuje w ~`439 ms` ekran `WakingUp` z loaderem (bez pełnych mrugnięć i bez wyłączania HV przed kolejnym krokiem), a przy wybudzeniu przyciskiem `BOOT` wchodzi wprost w `Recording` z wyłączonym Wi-Fi. Przy starcie do `Ready` połączenie Wi-Fi działa asynchronicznie w tle (`startWifiConnectAsync` / `pollWifiConnectAsync`).
 
 ## Bilans baterii (szacowana liczba notatek na 1 ładowaniu)
 

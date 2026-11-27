@@ -49,6 +49,7 @@ GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
 
 enum class DeviceState {
   Ready,
+  WakingUp,
   Recording,
   Uploading,
   Saved,
@@ -149,6 +150,12 @@ static bool uiWifiConnected = false;
 static uint32_t wifiLostAtMs = 0;
 static uint32_t lastQueueSyncAttemptMs = 0;
 static uint32_t lastWifiReconnectAttemptMs = 0;
+static bool wakeForRecording = false;
+static bool wifiConnecting = false;
+static uint32_t wifiConnectStartMs = 0;
+static uint32_t wifiConnectTimeoutMs = WIFI_CONNECT_TIMEOUT_MS;
+static uint8_t wifiConnectRetries = 0;
+static uint32_t wifiRetryAtMs = 0;
 static char lastErrorText[24] = "";
 
 static portMUX_TYPE btnMux = portMUX_INITIALIZER_UNLOCKED;
@@ -611,6 +618,104 @@ static bool connectToWifi(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   return false;
 }
 
+static void renderBottomInfoPartial();
+static void renderStatusBarPartial(bool wifiConnected);
+
+static void abortWifiConnectAsync() {
+  if (!wifiConnecting) return;
+  wifiConnecting = false;
+  wifiRetryAtMs = 0;
+  wifiRetryRequested = false;
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+static void startWifiConnectAsync(uint32_t timeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
+  if (cfg.wifiSsid.isEmpty() || portalActive || wifiConnecting ||
+      WiFi.status() == WL_CONNECTED || currentState == DeviceState::Recording) {
+    return;
+  }
+
+  Serial.printf("[Foxie] Connecting async to Wi-Fi '%s'...\n", cfg.wifiSsid.c_str());
+  wifiConnecting = true;
+  wifiConnectStartMs = millis();
+  wifiConnectTimeoutMs = timeoutMs;
+  wifiConnectRetries = 0;
+  wifiRetryAtMs = 0;
+  wifiRetryRequested = false;
+  lastWifiDisconnectReason = 0;
+
+  configureStableWifiSta(false);
+  WiFi.disconnect(false, true);
+  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+}
+
+static void pollWifiConnectAsync() {
+  if (!wifiConnecting) return;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnecting = false;
+    wifiRetryAtMs = 0;
+    WiFi.setAutoReconnect(true);
+    Serial.printf("[Foxie] Wi-Fi connected! IP: %s, RSSI: %d dBm\n",
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.RSSI());
+    syncNtpTime(1500);
+    resolveCustomCityIfNeeded();
+    bool weatherOk = fetchWeatherOpenMeteo();
+    prevWifiConnected = true;
+    wifiLostAtMs = 0;
+    lastQueueSyncAttemptMs = 0;
+    if (!uiWifiConnected) {
+      uiWifiConnected = true;
+      renderStatusBarPartial(true);
+      readyPartialCount++;
+    }
+    if (weatherOk) {
+      renderBottomInfoPartial();
+      readyPartialCount++;
+    }
+    enterIdlePowerProfile();
+    return;
+  }
+
+  uint32_t now = millis();
+  if (wifiRetryRequested && wifiConnectRetries < 3) {
+    wifiRetryRequested = false;
+    wifiConnectRetries++;
+    wifiRetryAtMs = now + WIFI_COMEBACK_RETRY_DELAY_MS;
+    Serial.printf("[Foxie] Wi-Fi assoc refused (reason=%u), waiting %lums before async retry %u/3...\n",
+                  static_cast<unsigned>(lastWifiDisconnectReason),
+                  static_cast<unsigned long>(WIFI_COMEBACK_RETRY_DELAY_MS),
+                  static_cast<unsigned>(wifiConnectRetries));
+    return;
+  }
+
+  if (wifiRetryAtMs != 0 && static_cast<int32_t>(now - wifiRetryAtMs) >= 0) {
+    wifiRetryAtMs = 0;
+    WiFi.disconnect(false);
+    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+    return;
+  }
+
+  if ((now - wifiConnectStartMs) >= wifiConnectTimeoutMs) {
+    wifiConnecting = false;
+    wifiRetryAtMs = 0;
+    lastWifiReconnectAttemptMs = now;
+    Serial.printf("[Foxie] Async Wi-Fi timeout (status=%d, reason=%u)\n",
+                  static_cast<int>(WiFi.status()),
+                  static_cast<unsigned>(lastWifiDisconnectReason));
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    enterIdlePowerProfile();
+    if (uiWifiConnected) {
+      uiWifiConnected = false;
+      renderStatusBarPartial(false);
+      readyPartialCount++;
+    }
+  }
+}
+
 static void handlePortalRoot() {
   markUserActivity();
   String html;
@@ -868,6 +973,26 @@ static void buildReadyStatusLabel(char* out, size_t len, bool wifiConnected) {
   }
 }
 
+// 16x16 1-bit wake-up sparkle/sun icon
+static const uint8_t ICON_WAKE_16[32] PROGMEM = {
+  0x01, 0x80,
+  0x01, 0x80,
+  0x20, 0x04,
+  0x11, 0x88,
+  0x0B, 0xD0,
+  0x07, 0xE0,
+  0x0F, 0xF0,
+  0xCF, 0xF3,
+  0xCF, 0xF3,
+  0x0F, 0xF0,
+  0x07, 0xE0,
+  0x0B, 0xD0,
+  0x11, 0x88,
+  0x20, 0x04,
+  0x01, 0x80,
+  0x01, 0x80
+};
+
 // 16x16 1-bit sync arrows icon (mirrors ICON_MIC placement on Recording screen)
 static const uint8_t ICON_SYNC_16[32] PROGMEM = {
   0x00, 0x00,
@@ -897,6 +1022,7 @@ static void renderCurrentScreen(bool partial = false) {
 
   setDisplayPower(true);
   if (partial) {
+    readyPartialCount++;
     display.setPartialWindow(0, 0, EPD_WIDTH, EPD_HEIGHT);
   } else {
     readyPartialCount = 0;
@@ -926,6 +1052,22 @@ static void renderCurrentScreen(bool partial = false) {
           drawStatusBar(statusLabel, wifiConnected);
           display.drawBitmap(UI_FOX_X, UI_FOX_READY_Y, FOX_SPRITE_READY, FOX_SPRITE_READY_W, FOX_SPRITE_READY_H, GxEPD_BLACK);
           drawBottomInfoRow(true);
+          break;
+        }
+
+        case DeviceState::WakingUp: {
+          drawStatusBar("WYBUDZANIE", false);
+          display.drawBitmap(UI_FOX_X, UI_FOX_Y, FOX_SPRITE_READY, FOX_SPRITE_READY_W, FOX_SPRITE_READY_H, GxEPD_BLACK);
+          display.drawBitmap(10, 28, ICON_WAKE_16, 16, 16, GxEPD_BLACK);
+          drawCenteredText(
+            EPD_WIDTH / 2,
+            165,
+            wakeForRecording ? "START NAGRYWANIA..." : "WYBUDZANIE...",
+            1
+          );
+          display.drawRect(36, 178, 128, 10, GxEPD_BLACK);
+          display.fillRect(38, 180, 38, 6, GxEPD_BLACK);
+          display.fillRect(80, 180, 38, 6, GxEPD_BLACK);
           break;
         }
 
@@ -1013,7 +1155,7 @@ static void renderCurrentScreen(bool partial = false) {
     display.drawRect(0, 0, EPD_WIDTH, EPD_HEIGHT, GxEPD_BLACK);
   } while (display.nextPage());
 
-  if (!isSleeping && currentState != DeviceState::Recording) {
+  if (!isSleeping && currentState != DeviceState::Recording && currentState != DeviceState::WakingUp) {
     display.powerOff();
   }
 }
@@ -1079,7 +1221,12 @@ static void enterState(DeviceState next, bool partial = false) {
   isSleeping = false;
   rtcInHibernation = false;
 
+  if (next == DeviceState::Ready && partial && readyPartialCount >= EPD_FULL_REFRESH_EVERY) {
+    partial = false;
+  }
+
   if (next == DeviceState::Recording) {
+    abortWifiConnectAsync();
     if (!audioRecorder.startRecording()) {
       snprintf(lastErrorText, sizeof(lastErrorText), "BLAD AUDIO");
       errorEnteredMs = millis();
@@ -1099,6 +1246,9 @@ static void enterState(DeviceState next, bool partial = false) {
     case DeviceState::Ready:
       lastErrorText[0] = '\0';
       currentLedPattern = LedPattern::Off;
+      break;
+    case DeviceState::WakingUp:
+      currentLedPattern = LedPattern::WifiPulse;
       break;
     case DeviceState::Recording:
       currentLedPattern = LedPattern::SlowBlink;
@@ -1192,6 +1342,7 @@ static void armHibernationSleepAndStart() {
 static void enterDeepSleepHibernation(const char* reason) {
   Serial.printf("[Foxie] Entering deep sleep hibernation (%s)\n", reason);
   stopCaptivePortal();
+  abortWifiConnectAsync();
   audioRecorder.prepareForDeepSleep();
   sdQueue.prepareForDeepSleep();
   isSleeping = true;
@@ -1224,25 +1375,27 @@ static void finishRecordingAndDispatch() {
   audioRecorder.stopRecording(stats);
   if (stats.pcmBytes < 9600) { // < 300 ms at 16 kHz, 16-bit mono
     Serial.println("[Foxie] Recording too short (<300 ms), discarded");
-    enterState(DeviceState::Ready);
+    enterState(DeviceState::Ready, true);
     return;
   }
 
   if (WiFi.status() == WL_CONNECTED && isApiConfigured()) {
     savedToSdFlag = false;
     uploadPending = true;
-    enterState(DeviceState::Uploading);
+    enterState(DeviceState::Uploading, true);
     return;
   }
 
   if (sdQueue.isMounted()) {
     String savedPath;
     if (sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), savedPath)) {
+      lastQueueSyncAttemptMs = 0;
+      lastWifiReconnectAttemptMs = 0;
       savedToSdFlag = true;
-      enterState(DeviceState::Saved);
+      enterState(DeviceState::Saved, true);
     } else {
       snprintf(lastErrorText, sizeof(lastErrorText), "BLAD SD");
-      enterState(DeviceState::Error);
+      enterState(DeviceState::Error, true);
     }
   } else {
     snprintf(
@@ -1251,7 +1404,7 @@ static void finishRecordingAndDispatch() {
       "%s",
       (WiFi.status() != WL_CONNECTED) ? "BRAK WI-FI" : "BRAK API URL"
     );
-    enterState(DeviceState::Error);
+    enterState(DeviceState::Error, true);
   }
 }
 
@@ -1351,14 +1504,15 @@ static void onBootShortPress() {
   switch (currentState) {
     case DeviceState::Ready:
     case DeviceState::Saved:
-      enterState(DeviceState::Recording);
+      enterState(DeviceState::Recording, true);
       break;
     case DeviceState::Recording:
       finishRecordingAndDispatch();
       break;
     case DeviceState::Error:
-      enterState(DeviceState::Ready);
+      enterState(DeviceState::Ready, true);
       break;
+    case DeviceState::WakingUp:
     case DeviceState::Uploading:
     case DeviceState::WifiSetup:
       break;
@@ -1377,7 +1531,7 @@ static void onPwrShortPress() {
     foxie_audio::CaptureStats discarded;
     audioRecorder.stopRecording(discarded);
     Serial.println("[Foxie] Recording cancelled by PWR");
-    enterState(DeviceState::Ready);
+    enterState(DeviceState::Ready, true);
     return;
   }
   if (currentState == DeviceState::WifiSetup) {
@@ -1386,7 +1540,7 @@ static void onPwrShortPress() {
       connectToWifi(8000);
     }
   }
-  enterState(DeviceState::Ready);
+  enterState(DeviceState::Ready, true);
 }
 
 static void onPwrLongPress() {
@@ -1509,7 +1663,7 @@ void setup() {
     armHibernationSleepAndStart();
   }
 
-  // Woken by button/touch or cold boot -> return to full awake mode
+  // Woken by button/touch (EXT1) or cold boot -> fast 3-state wake-up UX
   rtcInHibernation = false;
   isSleeping = false;
 
@@ -1518,10 +1672,77 @@ void setup() {
   setLedPhysical(false);
   xTaskCreate(ledTask, "led_task", 2048, nullptr, 1, nullptr);
 
-  attachInterruptArg(digitalPinToInterrupt(PIN_BTN_BOOT), handleButtonIsr, &btnBoot, CHANGE);
-  attachInterruptArg(digitalPinToInterrupt(PIN_BTN_PWR), handleButtonIsr, &btnPwr, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(PIN_TP_INT), handleTouchIsr, FALLING);
+  if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
+    uint64_t ext1Mask = esp_sleep_get_ext1_wakeup_status();
+    wakeForRecording = (ext1Mask & (1ULL << PIN_BTN_BOOT)) != 0;
+    currentLedPattern = LedPattern::WifiPulse;
 
+    // Show WakingUp loader immediately via clean partial refresh (~0.45s, zero full flash)
+    setDisplayPower(true);
+    SPI.begin(PIN_EPD_SCK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
+    display.init(0, false, 2, false);
+    display.setRotation(0);
+    display.setTextWrap(false);
+    display.setFullWindow();
+    display.firstPage();
+    do {
+      drawHibernationFrame(rtcHibLastMinute, rtcHibBatteryPercent);
+    } while (display.nextPageToPrevious());
+
+    currentState = DeviceState::WakingUp;
+    renderCurrentScreen(true);
+
+    Serial.begin(115200);
+    WiFi.onEvent(handleWifiEvent);
+    Serial.println();
+    Serial.printf("[Foxie] Woke from hibernation! ext1 mask=0x%llx, wakeForRec=%d\n",
+                  static_cast<unsigned long long>(ext1Mask),
+                  wakeForRecording ? 1 : 0);
+    loadConfigFromNvs();
+
+    bool audioOk = audioRecorder.begin();
+    Serial.printf("[Foxie] Audio init: %s\n", audioOk ? "OK" : "FAILED");
+    bool sdOk = sdQueue.begin();
+    Serial.printf("[Foxie] SD queue init: %s (pending=%u)\n",
+                  sdOk ? "OK" : "NONE",
+                  static_cast<unsigned>(sdQueue.pendingCount()));
+
+    uint32_t relWaitStart = millis();
+    while ((digitalRead(PIN_BTN_BOOT) == LOW || digitalRead(PIN_BTN_PWR) == LOW) &&
+           (millis() - relWaitStart) < 300) {
+      delay(10);
+    }
+    btnBoot.isDown = false;
+    btnBoot.longTriggered = false;
+    btnBoot.shortPending = false;
+    btnBoot.longPending = false;
+    btnPwr.isDown = false;
+    btnPwr.longTriggered = false;
+    btnPwr.shortPending = false;
+    btnPwr.longPending = false;
+
+    attachInterruptArg(digitalPinToInterrupt(PIN_BTN_BOOT), handleButtonIsr, &btnBoot, CHANGE);
+    attachInterruptArg(digitalPinToInterrupt(PIN_BTN_PWR), handleButtonIsr, &btnPwr, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_TP_INT), handleTouchIsr, FALLING);
+
+    markUserActivity();
+    prevWifiConnected = false;
+    uiWifiConnected = false;
+
+    if (wakeForRecording) {
+      wakeForRecording = false;
+      enterState(DeviceState::Recording, true);
+    } else if (cfg.wifiSsid.isEmpty()) {
+      enterState(DeviceState::WifiSetup, false);
+    } else {
+      enterState(DeviceState::Ready, true);
+      startWifiConnectAsync(WIFI_CONNECT_TIMEOUT_MS);
+    }
+    return;
+  }
+
+  // Cold boot / reset
+  wakeForRecording = false;
   if (wakeCause == ESP_SLEEP_WAKEUP_UNDEFINED) {
     pinMode(PIN_TP_RST, OUTPUT);
     digitalWrite(PIN_TP_RST, LOW);
@@ -1532,16 +1753,11 @@ void setup() {
 
   setDisplayPower(true);
   Serial.begin(115200);
-  delay(200);
   WiFi.onEvent(handleWifiEvent);
   Serial.println();
   Serial.printf("[Foxie] Booting Waveshare V2 (wakeCause=%d, resetReason=%d)\n",
                 static_cast<int>(wakeCause),
                 static_cast<int>(esp_reset_reason()));
-  if (wakeCause == ESP_SLEEP_WAKEUP_EXT1) {
-    Serial.printf("[Foxie] Woke from hibernation! ext1 mask=0x%llx\n",
-                  static_cast<unsigned long long>(esp_sleep_get_ext1_wakeup_status()));
-  }
   if (psramFound()) {
     Serial.printf("[Foxie] PSRAM OK: %lu bytes free\n", static_cast<unsigned long>(ESP.getFreePsram()));
   } else {
@@ -1552,6 +1768,8 @@ void setup() {
   display.init(115200, true, 2, false);
   display.setRotation(0);
   display.setTextWrap(false);
+  currentState = DeviceState::WakingUp;
+  renderCurrentScreen(false);
 
   bool audioOk = audioRecorder.begin();
   Serial.printf("[Foxie] Audio init: %s\n", audioOk ? "OK" : "FAILED");
@@ -1561,22 +1779,19 @@ void setup() {
                 sdOk ? "OK" : "NONE",
                 static_cast<unsigned>(sdQueue.pendingCount()));
 
+  attachInterruptArg(digitalPinToInterrupt(PIN_BTN_BOOT), handleButtonIsr, &btnBoot, CHANGE);
+  attachInterruptArg(digitalPinToInterrupt(PIN_BTN_PWR), handleButtonIsr, &btnPwr, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_TP_INT), handleTouchIsr, FALLING);
+
   markUserActivity();
   loadConfigFromNvs();
-  if (connectToWifi(WIFI_CONNECT_TIMEOUT_MS)) {
-    prevWifiConnected = true;
-    uiWifiConnected = true;
-    enterState(DeviceState::Ready);
-  } else if (cfg.wifiSsid.isEmpty()) {
-    prevWifiConnected = false;
-    uiWifiConnected = false;
-    enterState(DeviceState::WifiSetup);
+  prevWifiConnected = false;
+  uiWifiConnected = false;
+  if (cfg.wifiSsid.isEmpty()) {
+    enterState(DeviceState::WifiSetup, false);
   } else {
-    prevWifiConnected = false;
-    uiWifiConnected = false;
-    lastWifiReconnectAttemptMs = millis();
-    Serial.println("[Foxie] Offline mode -> Ready (SD queue available)");
-    enterState(DeviceState::Ready);
+    enterState(DeviceState::Ready, true);
+    startWifiConnectAsync(WIFI_CONNECT_TIMEOUT_MS);
   }
 }
 
@@ -1705,16 +1920,17 @@ void loop() {
       if (res.ok) {
         lastErrorText[0] = '\0';
         savedToSdFlag = false;
-        enterState(DeviceState::Saved);
+        enterState(DeviceState::Saved, true);
       } else if (isTransientUploadError(res.httpStatus) && sdQueue.isMounted()) {
         String savedPath;
         if (sdQueue.enqueueWav(audioRecorder.wavData(), audioRecorder.wavSize(), savedPath)) {
-          lastQueueSyncAttemptMs = millis();
+          lastQueueSyncAttemptMs = 0;
+          lastWifiReconnectAttemptMs = 0;
           savedToSdFlag = true;
-          enterState(DeviceState::Saved);
+          enterState(DeviceState::Saved, true);
         } else {
           snprintf(lastErrorText, sizeof(lastErrorText), "BLAD SD");
-          enterState(DeviceState::Error);
+          enterState(DeviceState::Error, true);
         }
       } else {
         snprintf(
@@ -1723,24 +1939,26 @@ void loop() {
           "%s",
           res.shortError[0] ? res.shortError : "BLAD WYSYLKI"
         );
-        enterState(DeviceState::Error);
+        enterState(DeviceState::Error, true);
       }
     }
   } else if (!isSleeping && currentState == DeviceState::Saved) {
     if (now - savedEnteredMs >= SAVED_AUTO_RETURN_MS) {
       savedToSdFlag = false;
-      enterState(DeviceState::Ready);
+      enterState(DeviceState::Ready, true);
     }
   } else if (!isSleeping && currentState == DeviceState::Error) {
     if (now - errorEnteredMs >= ERROR_AUTO_RETURN_MS) {
       lastErrorText[0] = '\0';
-      enterState(DeviceState::Ready);
+      enterState(DeviceState::Ready, true);
     }
   } else if (!isSleeping && currentState == DeviceState::Ready) {
     if ((now - lastActivityMs) >= INACTIVITY_SLEEP_MS) {
       enterDeepSleepHibernation("3 min bezczynnosci");
       return;
     }
+
+    pollWifiConnectAsync();
 
     bool wifiNow = (WiFi.status() == WL_CONNECTED);
     if (wifiNow) {
@@ -1766,7 +1984,7 @@ void loop() {
         enterIdlePowerProfile();
         return;
       }
-    } else {
+    } else if (!wifiConnecting) {
       if (prevWifiConnected) {
         prevWifiConnected = false;
         wifiLostAtMs = now;
@@ -1783,21 +2001,7 @@ void loop() {
           (wifiRetryRequested || (now - lastWifiReconnectAttemptMs) >= WIFI_RECONNECT_INTERVAL_MS)) {
         lastWifiReconnectAttemptMs = now;
         wifiRetryRequested = false;
-        Serial.println("[Foxie] Attempting background Wi-Fi reconnect...");
-        if (!connectToWifi(8000)) {
-          enterIdlePowerProfile();
-        } else {
-          prevWifiConnected = true;
-          lastQueueSyncAttemptMs = 0;
-          if (!uiWifiConnected) {
-            uiWifiConnected = true;
-            renderStatusBarPartial(true);
-            readyPartialCount++;
-          }
-          renderBottomInfoPartial();
-          readyPartialCount++;
-          enterIdlePowerProfile();
-        }
+        startWifiConnectAsync(8000);
         return;
       }
     }
