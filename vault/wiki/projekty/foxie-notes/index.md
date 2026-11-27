@@ -1,7 +1,7 @@
 ---
 title: Foxie Notes
 slug: projekty/foxie-notes/index
-updated_at: 2026-11-27T10:08:00Z
+updated_at: 2026-11-27T10:25:00Z
 tags: [projekt, foxie-notes, esp32, obsidian]
 ---
 
@@ -18,8 +18,8 @@ Prywatny system do szybkiego przechwytywania notatek głosowych i przeglądania 
 
 ## Zatwierdzona mapa przycisków (Waveshare 1.54" V2)
 - `BOOT` (`GPIO 0`, krótkie kliknięcie): start / stop nagrywania notatki głosowej.
-- `BOOT` (`GPIO 0`, długie przytrzymanie ≥ 2.5 s): tryb konfiguracji Wi-Fi z kodem QR (Captive Portal).
-- `PWR` (`GPIO 18`, krótkie kliknięcie): wybudzenie / odświeżenie ekranu.
+- `BOOT` (`GPIO 0`, długie przytrzymanie ≥ 2.5 s): wyłączone (Captive Portal Wi-Fi uruchamia się wyłącznie przy pustym SSID w NVS).
+- `PWR` (`GPIO 18`, krótkie kliknięcie): wybudzenie / odświeżenie ekranu (lub anulowanie nagrywania).
 - `PWR` (`GPIO 18`, długie przytrzymanie ≥ 2.5 s): bezpieczne uśpienie / wyłączenie zasilania bateryjnego (`PWR_HOLD`).
 
 ## Powiązane dokumenty i zadania

@@ -18,7 +18,7 @@ namespace {
 
 constexpr size_t RAW_B64_CHUNK_BYTES = 3072; // Multiple of 3 -> 4096 bytes Base64 output
 constexpr uint32_t SOCKET_WRITE_TIMEOUT_MS = 15000;
-constexpr uint32_t HTTP_RESPONSE_TIMEOUT_MS = 45000;
+constexpr uint32_t HTTP_RESPONSE_TIMEOUT_MS = 60000;
 constexpr size_t MAX_RESPONSE_BODY_BYTES = 2048;
 
 struct ParsedEndpoint {

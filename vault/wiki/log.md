@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T10:08:00Z
+updated_at: 2026-11-27T10:26:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Auto-czyszczenie `inboxSweeper` (`onSchedule`) + Firmware Paczka 2 (limit `120 s`, brak QR z przycisków, `SYNC 1/5`, bilans baterii):**
+  - Dodano cykliczną funkcję [`inboxSweeper`](../../../functions/src/index.ts) (`every 5 minutes`, `europe-west1`) oraz śledzenie pola `attempts` w [`firestoreStore.ts`](../../../functions/src/services/firestoreStore.ts) / [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) z limitem `maxAttempts = 3` (poison-pill cap), żeby osierocone pliki `raw/inbox/` czyściły się automatycznie bez ręcznej ingerencji. Testy `npm --prefix functions test`: `25/25` pass; wdrożono `api` oraz `inboxSweeper` w Firebase (`cloudscheduler.googleapis.com` włączony).
+  - Zrealizowano Paczkę 2 w `firmware/`: wydłużono limit nagrywania do `120 s` ([`audio_recorder.h`](../../../firmware/include/audio_recorder.h)) i timeout HTTP do `60 s` ([`capture_client.cpp`](../../../firmware/src/capture_client.cpp)), wyłączono wywołanie ekranu QR Wi-Fi z przycisków fizycznych (`onBootLongPress()` w [`main.cpp`](../../../firmware/src/main.cpp)), dodano ikonę synchronizacji `ICON_SYNC_16` i licznik postępu `SYNC 1/5` (`SYNC 1 z 5`) podczas opróżniania kolejki MicroSD oraz dopisano bilans zużycia baterii do [`sprzet-waveshare-v2.md`](../../../vault/wiki/projekty/foxie-notes/sprzet-waveshare-v2.md). Build PlatformIO przeszedł (`RAM 17.1%`, `Flash 36.8%`; płytka nie była podłączona do `COM5`).
 - **Paczka 1 — Naprawa wyścigu Git `422`, porządki w `obsydianandwiki`, opróżnienie `raw/inbox/` i `npm run vault:overview`:**
   - Zdiagnozowano przyczynę 3 zaległych plików w `raw/inbox/` (seria uploadów z SD wywołała wyścig `422 Update is not a fast forward` podczas równoległych commitów `capture` i `agent(organizer)`, a brak retry przerywał organizację bez ponowienia). Dodano retry w [`github.ts`](../../../functions/src/services/github.ts) (`isGitConflictError`), retry z ponownym scalaniem `wiki/index.md`, `wiki/log.md` i strony docelowej w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts), kanonizację aliasów `foxie-notes` (`foxy-news`, `foxing-news`, `foxie-news`) oraz ochronę `sprzet-waveshare-v2.md` i `zadania/*`. Testy `npm --prefix functions test`: `24/24` pass; wdrożono Cloud Function `api`.
   - Wyczyszczono zdalny vault `obsydianandwiki` (commit `7ab81e5`): usunięto `pomysly/bateria-lipo-obudowa-waveshare`, scalono `foxing-news` i notatki UX wybudzania do `wiki/projekty/foxie-notes/notatki.md`, naprawiono `wiki/index.md` oraz opróżniono wszystkie 3 zaległe pliki w `raw/inbox/` przez `POST /api/agents/organize-inbox` (`processed: 3, errors: 0`).

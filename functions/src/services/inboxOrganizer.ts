@@ -811,6 +811,7 @@ export async function organizeInboxFile(params: {
   buildVaultCommandPlan?: BuildVaultCommandPlanFn;
   vaultPrefix?: string;
   now?: () => Date;
+  maxAttempts?: number;
   force?: boolean;
 }): Promise<OrganizeInboxResult> {
   const getNow = params.now ?? (() => new Date());
@@ -834,20 +835,26 @@ export async function organizeInboxFile(params: {
   const claim = await params.store.claimInboxJob({
     inboxPath: params.inboxRepoPath,
     nowIso,
+    maxAttempts: params.maxAttempts,
     force: params.force,
   });
 
   if (!claim.claimed) {
+    const reason =
+      claim.existing?.status === "error"
+        ? "max_attempts_reached"
+        : `already_${claim.existing?.status ?? "claimed"}`;
     return {
       inboxPath: params.inboxRepoPath,
       status: "skipped",
-      reason: `already_${claim.existing?.status ?? "claimed"}`,
+      reason,
       targetPath: claim.existing?.targetPath,
       processedPath: claim.existing?.processedPath,
       commitSha: claim.existing?.commitSha,
     };
   }
 
+  const attempts = claim.attempts ?? 1;
   const createdAt = claim.existing?.createdAt ?? nowIso;
 
   try {
@@ -857,6 +864,7 @@ export async function organizeInboxFile(params: {
         id: "",
         inboxPath: params.inboxRepoPath,
         status: "done",
+        attempts,
         createdAt,
         updatedAt: nowIso,
         error: "Source file no longer present in raw/inbox/",
@@ -936,6 +944,7 @@ export async function organizeInboxFile(params: {
         inboxPath: params.inboxRepoPath,
         processedPath: processedRepoPath,
         status: "done",
+        attempts,
         intent: "vault-command",
         ...(primaryTargetPath ? { targetPath: primaryTargetPath } : {}),
         ...(vaultCommandResult.commitSha ? { commitSha: vaultCommandResult.commitSha } : {}),
@@ -983,6 +992,7 @@ export async function organizeInboxFile(params: {
             id: "",
             inboxPath: params.inboxRepoPath,
             status: "done",
+            attempts,
             createdAt,
             updatedAt: nowIso,
             error: "Source file no longer present in raw/inbox/",
@@ -1162,6 +1172,7 @@ export async function organizeInboxFile(params: {
       inboxPath: params.inboxRepoPath,
       processedPath: processedRepoPath,
       status: "done",
+      attempts,
       intent: decision.intent,
       targetPath: targetRepoPath,
       commitSha: commitRes.commitSha,
@@ -1195,6 +1206,7 @@ export async function organizeInboxFile(params: {
       id: "",
       inboxPath: params.inboxRepoPath,
       status: "error",
+      attempts,
       error: message,
       createdAt,
       updatedAt: nowIso,
@@ -1222,6 +1234,7 @@ export async function organizePendingInboxFiles(params: {
   vaultPrefix?: string;
   paths?: string[];
   limit?: number;
+  maxAttempts?: number;
   force?: boolean;
   now?: () => Date;
 }): Promise<{
@@ -1273,6 +1286,7 @@ export async function organizePendingInboxFiles(params: {
       buildVaultCommandPlan: params.buildVaultCommandPlan,
       vaultPrefix: params.vaultPrefix,
       now: params.now,
+      maxAttempts: params.maxAttempts,
       force: params.force,
     });
     results.push(result);

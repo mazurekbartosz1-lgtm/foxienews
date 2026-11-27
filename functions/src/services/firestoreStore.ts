@@ -10,6 +10,7 @@ const COLLECTION_TASKS = "tasks";
 const COLLECTION_INBOX_JOBS = "inbox_jobs";
 const FIRESTORE_BATCH_LIMIT = 450;
 const DEFAULT_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
+export const DEFAULT_MAX_INBOX_ATTEMPTS = 3;
 
 export function inboxPathToJobId(inboxPath: string): string {
   return crypto.createHash("sha1").update(inboxPath).digest("hex").slice(0, 20);
@@ -29,8 +30,9 @@ export interface VaultStore {
     inboxPath: string;
     nowIso: string;
     staleAfterMs?: number;
+    maxAttempts?: number;
     force?: boolean;
-  }): Promise<{ claimed: boolean; existing?: InboxJobDoc }>;
+  }): Promise<{ claimed: boolean; attempts?: number; existing?: InboxJobDoc }>;
   completeInboxJob(job: InboxJobDoc): Promise<void>;
 }
 
@@ -145,38 +147,48 @@ export function createFirestoreVaultStore(): VaultStore {
       inboxPath: string;
       nowIso: string;
       staleAfterMs?: number;
+      maxAttempts?: number;
       force?: boolean;
-    }): Promise<{ claimed: boolean; existing?: InboxJobDoc }> {
+    }): Promise<{ claimed: boolean; attempts?: number; existing?: InboxJobDoc }> {
       const id = inboxPathToJobId(params.inboxPath);
       const ref = db().collection(COLLECTION_INBOX_JOBS).doc(id);
       const staleAfterMs = params.staleAfterMs ?? DEFAULT_JOB_STALE_AFTER_MS;
+      const maxAttempts = params.maxAttempts ?? DEFAULT_MAX_INBOX_ATTEMPTS;
       const nowMs = Date.parse(params.nowIso);
 
       return db().runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const existing = snap.exists ? (snap.data() as InboxJobDoc) : undefined;
 
-        if (existing) {
-          if (existing.status === "done" && !params.force) {
+        if (existing && !params.force) {
+          if (existing.status === "done") {
             return { claimed: false, existing };
           }
-          if (existing.status === "processing" && !params.force) {
+          if (existing.status === "processing") {
             const updatedMs = Date.parse(existing.updatedAt);
             if (!Number.isNaN(nowMs) && !Number.isNaN(updatedMs) && nowMs - updatedMs < staleAfterMs) {
               return { claimed: false, existing };
             }
           }
+          if (existing.status === "error") {
+            const prevAttempts = existing.attempts ?? 1;
+            if (maxAttempts > 0 && prevAttempts >= maxAttempts) {
+              return { claimed: false, existing };
+            }
+          }
         }
 
+        const nextAttempts = params.force ? 1 : (existing?.attempts ?? 0) + 1;
         const nextJob: InboxJobDoc = {
           id,
           inboxPath: params.inboxPath,
           status: "processing",
+          attempts: nextAttempts,
           createdAt: existing?.createdAt ?? params.nowIso,
           updatedAt: params.nowIso,
         };
         tx.set(ref, stripUndefined(nextJob));
-        return { claimed: true, existing };
+        return { claimed: true, attempts: nextAttempts, existing };
       });
     },
 
@@ -253,34 +265,48 @@ export function createInMemoryVaultStore(): VaultStore & {
       inboxPath: string;
       nowIso: string;
       staleAfterMs?: number;
+      maxAttempts?: number;
       force?: boolean;
-    }): Promise<{ claimed: boolean; existing?: InboxJobDoc }> {
+    }): Promise<{ claimed: boolean; attempts?: number; existing?: InboxJobDoc }> {
       const id = inboxPathToJobId(params.inboxPath);
       const existing = inboxJobs.get(id);
       const staleAfterMs = params.staleAfterMs ?? DEFAULT_JOB_STALE_AFTER_MS;
+      const maxAttempts = params.maxAttempts ?? DEFAULT_MAX_INBOX_ATTEMPTS;
       const nowMs = Date.parse(params.nowIso);
 
-      if (existing) {
-        if (existing.status === "done" && !params.force) {
+      if (existing && !params.force) {
+        if (existing.status === "done") {
           return { claimed: false, existing: structuredClone(existing) };
         }
-        if (existing.status === "processing" && !params.force) {
+        if (existing.status === "processing") {
           const updatedMs = Date.parse(existing.updatedAt);
           if (!Number.isNaN(nowMs) && !Number.isNaN(updatedMs) && nowMs - updatedMs < staleAfterMs) {
             return { claimed: false, existing: structuredClone(existing) };
           }
         }
+        if (existing.status === "error") {
+          const prevAttempts = existing.attempts ?? 1;
+          if (maxAttempts > 0 && prevAttempts >= maxAttempts) {
+            return { claimed: false, existing: structuredClone(existing) };
+          }
+        }
       }
 
+      const nextAttempts = params.force ? 1 : (existing?.attempts ?? 0) + 1;
       const nextJob: InboxJobDoc = {
         id,
         inboxPath: params.inboxPath,
         status: "processing",
+        attempts: nextAttempts,
         createdAt: existing?.createdAt ?? params.nowIso,
         updatedAt: params.nowIso,
       };
       inboxJobs.set(id, structuredClone(nextJob));
-      return { claimed: true, existing: existing ? structuredClone(existing) : undefined };
+      return {
+        claimed: true,
+        attempts: nextAttempts,
+        existing: existing ? structuredClone(existing) : undefined,
+      };
     },
 
     async completeInboxJob(job: InboxJobDoc): Promise<void> {

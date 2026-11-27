@@ -1,7 +1,11 @@
 import { initializeApp } from "firebase-admin/app";
 import { defineSecret } from "firebase-functions/params";
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { app } from "./app.js";
+import { createFirestoreVaultStore } from "./services/firestoreStore.js";
+import { createGitHubVaultClient } from "./services/github.js";
+import { organizePendingInboxFiles } from "./services/inboxOrganizer.js";
 
 initializeApp();
 
@@ -31,4 +35,37 @@ export const api = onRequest(
     ],
   },
   app,
+);
+
+export const inboxSweeper = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    secrets: [
+      githubToken,
+      geminiApiKey,
+      googleClientId,
+      googleClientSecret,
+      googleRefreshToken,
+    ],
+  },
+  async () => {
+    const vaultClient = createGitHubVaultClient();
+    const store = createFirestoreVaultStore();
+    const result = await organizePendingInboxFiles({
+      vaultClient,
+      store,
+      vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+      limit: 10,
+      maxAttempts: 3,
+    });
+    if (result.processed > 0 || result.errors > 0 || result.skipped > 0) {
+      console.log(
+        `[inboxSweeper] processed=${result.processed} skipped=${result.skipped} errors=${result.errors}`,
+      );
+    }
+  },
 );

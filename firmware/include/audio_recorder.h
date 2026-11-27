@@ -10,7 +10,7 @@ namespace foxie_audio {
 constexpr uint32_t SAMPLE_RATE = 16000;
 constexpr uint8_t BITS_PER_SAMPLE = 16;
 constexpr uint8_t CHANNELS = 1;
-constexpr uint32_t MAX_DURATION_SEC = 60;
+constexpr uint32_t MAX_DURATION_SEC = 120;
 constexpr size_t WAV_HEADER_SIZE = 44;
 constexpr size_t MAX_PCM_BYTES =
   static_cast<size_t>(SAMPLE_RATE) * (BITS_PER_SAMPLE / 8) * CHANNELS * MAX_DURATION_SEC;

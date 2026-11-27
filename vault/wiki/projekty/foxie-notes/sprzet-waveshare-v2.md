@@ -1,7 +1,7 @@
 ---
 title: Waveshare ESP32-S3-Touch-ePaper-1.54 V2
 slug: projekty/foxie-notes/sprzet-waveshare-v2
-updated_at: 2026-11-26T18:55:00Z
+updated_at: 2026-11-27T10:25:00Z
 tags: [sprzet, waveshare, esp32-s3, pinout]
 ---
 
@@ -30,3 +30,18 @@ Notatka referencyjna sprzętu dla [[projekty/foxie-notes/index|Foxie Notes]] (zg
   - **Power-gating ES8311 (`audio_recorder.cpp`):** szyna audio `PIN_AUDIO_PWR` oraz magistrala I²C są wyłączone w spoczynku i budzone wyłącznie na czas nagrywania (`wakeCodec()` / `powerDownCodec()`).
   - **On-demand MicroSD (`sd_queue.cpp`):** `SD_MMC` jest montowane tylko podczas zapisu/odczytu kolejki i odmontowywane po operacji (`suspend()`).
   - **Idle CPU + Wi-Fi Modem Sleep + e-Paper HV OFF:** w stanie `Ready` MCU pracuje na **80 MHz** z `WiFi.setSleep(WIFI_PS_MAX_MODEM)` (w trybie offline `WiFi.mode(WIFI_OFF)` z próbą co `60 s`), po każdym odświeżeniu ekranu wyłączana jest pompa HV (`display.powerOff()`), a odczyt napięcia baterii (`readBatteryMilliVolts()`) uśrednia 8 próbek ADC. Przy aktywnym transferze HTTPS/pogody profil przełącza się na `240 MHz` + `WIFI_PS_NONE`.
+
+## Bilans baterii (szacowana liczba notatek na 1 ładowaniu)
+
+Szacunki oparte na zaimplementowanym profilu mocy (`80 MHz` idle, `240 MHz` tylko przy transferze Wi-Fi/TLS, power-gating ES8311 + on-demand SDMMC + `display.powerOff()`):
+
+- **Koszt pojedynczych operacji (orientacyjny):**
+  - Nagranie głosowe `30 s` (`80–240 MHz` + ES8311 + zapis do PSRAM/SD): ok. **0.75 mAh** (dla pełnych `120 s`: ok. **3.0 mAh**).
+  - Wysyłka HTTPS przez Wi-Fi (`~10 s` przy `240 MHz` + TLS handshake + `WIFI_PS_NONE`): ok. **0.50 mAh**.
+  - Odświeżenie ekranu e-Paper (`Ready`/`Recording`/`Saved`): ok. **0.04 mAh** na cykl.
+  - Okno bezczynności `3 min` w trybie `Ready` przed przejściem w `deep_sleep` (`~40 mA` z modem sleep): ok. **2.0 mAh**.
+  - Głęboki sen (`deep_sleep`): ok. **0.35–1.0 mA** (zależnie od stanu RTC/peryferiów płytki).
+- **Szacowana pojemność w praktyce (notatki ~30 s):**
+  - **Akumulator OEM 400 mAh:** ok. **180–250 notatek** przy nagrywaniu seryjnym offline na spacerze (jedno wybudzenie -> wiele nagrań -> późniejsza zbiorcza synchronizacja Wi-Fi) lub **~60–90 niezależnych sesji** (*wybudzenie z kieszeni -> nagranie -> 3 min Ready -> deep_sleep*).
+  - **Ogniwo LiPo 1000 mAh (np. 803040 z MX1.25):** ok. **500–600 notatek** w trybie seryjnym offline lub **~180–240 niezależnych sesji** wybudzenia i powrotu do snu.
+- **Kluczowa obserwacja UX vs bateria:** Najwięcej energii z pojedynczej szybkiej notatki zjada 3-minutowe okno `Ready` po nagraniu (~2.0 mAh), a nie samo nagrywanie czy e-ink. Skrócenie czasu powrotu do uśpienia po udanym zapisie (`Saved -> deep_sleep` lub krótsze okno po wysłaniu) pozwala niemal podwoić liczbę sesji bez pogarszania responsywności wybudzania.

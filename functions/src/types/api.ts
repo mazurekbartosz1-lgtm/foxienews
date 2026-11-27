@@ -81,6 +81,7 @@ export interface InboxJobDoc {
   planningStatus?: "synced" | "skipped" | "error";
   vaultCommandSummary?: string;
   vaultCommandFiles?: string[];
+  attempts?: number;
   error?: string;
   createdAt: string;
   updatedAt: string;

@@ -129,6 +129,8 @@ static uint32_t lastClockCheckMs = 0;
 static int lastRenderedMinute = -1;
 static uint8_t readyPartialCount = 0;
 static uint8_t uploadProgress = 0;
+static uint16_t syncQueueCurrent = 0;
+static uint16_t syncQueueTotal = 0;
 static uint8_t batteryPercent = 100;
 static volatile bool touchActivityPending = false;
 
@@ -866,6 +868,26 @@ static void buildReadyStatusLabel(char* out, size_t len, bool wifiConnected) {
   }
 }
 
+// 16x16 1-bit sync arrows icon (mirrors ICON_MIC placement on Recording screen)
+static const uint8_t ICON_SYNC_16[32] PROGMEM = {
+  0x00, 0x00,
+  0x07, 0xE0,
+  0x1F, 0xF8,
+  0x38, 0x3C,
+  0x70, 0x1E,
+  0x60, 0x3E,
+  0xC0, 0x0E,
+  0x00, 0x00,
+  0x00, 0x00,
+  0x70, 0x03,
+  0x7C, 0x06,
+  0x78, 0x0E,
+  0x3C, 0x1C,
+  0x1F, 0xF8,
+  0x07, 0xE0,
+  0x00, 0x00
+};
+
 static void renderCurrentScreen(bool partial = false) {
   batteryPercent = readBatteryPercent();
   bool wifiConnected = (!isSleeping && WiFi.status() == WL_CONNECTED);
@@ -920,12 +942,40 @@ static void renderCurrentScreen(bool partial = false) {
         }
 
         case DeviceState::Uploading: {
-          drawStatusBar("WYSYLANIE", wifiConnected);
+          if (syncQueueTotal > 0) {
+            char syncLabel[24];
+            snprintf(
+              syncLabel,
+              sizeof(syncLabel),
+              "SYNC %u/%u",
+              static_cast<unsigned>(syncQueueCurrent),
+              static_cast<unsigned>(syncQueueTotal)
+            );
+            drawStatusBar(syncLabel, wifiConnected);
+          } else {
+            drawStatusBar("WYSYLANIE", wifiConnected);
+          }
           display.drawBitmap(UI_FOX_X, UI_FOX_Y, FOX_SPRITE_UPLOAD, FOX_SPRITE_UPLOAD_W, FOX_SPRITE_UPLOAD_H, GxEPD_BLACK);
-          display.drawRect(28, UI_PROGRESS_Y, 144, 12, GxEPD_BLACK);
+          display.drawBitmap(10, 28, ICON_SYNC_16, 16, 16, GxEPD_BLACK);
+
+          int16_t barY = UI_PROGRESS_Y;
+          if (syncQueueTotal > 0) {
+            char cntBuf[24];
+            snprintf(
+              cntBuf,
+              sizeof(cntBuf),
+              "SYNC %u z %u",
+              static_cast<unsigned>(syncQueueCurrent),
+              static_cast<unsigned>(syncQueueTotal)
+            );
+            drawCenteredText(EPD_WIDTH / 2, 165, cntBuf, 1);
+            barY = 177;
+          }
+
+          display.drawRect(28, barY, 144, 12, GxEPD_BLACK);
           int16_t innerW = (140 * uploadProgress) / 100;
           if (innerW > 0) {
-            display.fillRect(30, UI_PROGRESS_Y + 2, innerW, 8, GxEPD_BLACK);
+            display.fillRect(30, barY + 2, innerW, 8, GxEPD_BLACK);
           }
           break;
         }
@@ -1055,7 +1105,9 @@ static void enterState(DeviceState next, bool partial = false) {
       break;
     case DeviceState::Uploading:
       uploadStartedMs = millis();
-      uploadProgress = 50;
+      if (syncQueueTotal == 0) {
+        uploadProgress = 50;
+      }
       currentLedPattern = LedPattern::FastBlink;
       break;
     case DeviceState::Saved:
@@ -1212,15 +1264,33 @@ static void syncOfflineQueueNow() {
   lastQueueSyncAttemptMs = millis();
   savedToSdFlag = false;
   uploadPending = false;
+  syncQueueTotal = sdQueue.pendingCount();
+  syncQueueCurrent = 1;
+  uint16_t initialDenom = (syncQueueTotal > 0) ? syncQueueTotal : 1;
+  uploadProgress = static_cast<uint8_t>(35U / initialDenom);
+  if (uploadProgress < 15) uploadProgress = 15;
   enterState(DeviceState::Uploading);
 
   uint16_t syncedCount = 0;
   String filePath;
   while (sdQueue.peekOldest(filePath)) {
+    if (syncedCount > 0) {
+      syncQueueCurrent = syncedCount + 1;
+      if (syncQueueCurrent > syncQueueTotal) {
+        syncQueueTotal = syncQueueCurrent;
+      }
+      uint16_t denom = (syncQueueTotal > 0) ? syncQueueTotal : 1;
+      uploadProgress = static_cast<uint8_t>((((syncQueueCurrent - 1) * 100U) + 35U) / denom);
+      if (uploadProgress > 100) uploadProgress = 100;
+      renderCurrentScreen(true);
+    }
+
     uint8_t* wavBuf = nullptr;
     size_t wavSize = 0;
     if (!sdQueue.readFileToPsram(filePath, wavBuf, wavSize)) {
       Serial.printf("[SD] Skipping unreadable queued file: %s\n", filePath.c_str());
+      syncQueueCurrent = 0;
+      syncQueueTotal = 0;
       sdQueue.suspend();
       enterState(DeviceState::Ready);
       return;
@@ -1253,12 +1323,16 @@ static void syncOfflineQueueNow() {
         "%s",
         res.shortError[0] ? res.shortError : "BLAD SYNC"
       );
+      syncQueueCurrent = 0;
+      syncQueueTotal = 0;
       sdQueue.suspend();
       enterState(DeviceState::Error);
       return;
     }
   }
 
+  syncQueueCurrent = 0;
+  syncQueueTotal = 0;
   sdQueue.suspend();
   if (syncedCount > 0) {
     Serial.printf("[SD] Offline queue synced (%u file(s))\n", static_cast<unsigned>(syncedCount));
@@ -1293,12 +1367,7 @@ static void onBootShortPress() {
 
 static void onBootLongPress() {
   markUserActivity();
-  Serial.println("[Foxie] BOOT long press -> Wi-Fi QR");
-  if (currentState == DeviceState::Recording) {
-    foxie_audio::CaptureStats discarded;
-    audioRecorder.stopRecording(discarded);
-  }
-  enterState(DeviceState::WifiSetup);
+  Serial.println("[Foxie] BOOT long press ignored (Wi-Fi QR disabled from buttons)");
 }
 
 static void onPwrShortPress() {
@@ -1506,7 +1575,7 @@ void setup() {
     prevWifiConnected = false;
     uiWifiConnected = false;
     lastWifiReconnectAttemptMs = millis();
-    Serial.println("[Foxie] Offline mode -> Ready (SD queue available, hold BOOT 2.5s for setup)");
+    Serial.println("[Foxie] Offline mode -> Ready (SD queue available)");
     enterState(DeviceState::Ready);
   }
 }
@@ -1610,7 +1679,8 @@ void loop() {
 
   if (!isSleeping && currentState == DeviceState::Recording) {
     if (audioRecorder.hasReachedLimit()) {
-      Serial.println("[Foxie] Max recording duration (60s) reached -> dispatching");
+      Serial.printf("[Foxie] Max recording duration (%lus) reached -> dispatching\n",
+                    static_cast<unsigned long>(foxie_audio::MAX_DURATION_SEC));
       finishRecordingAndDispatch();
       return;
     }

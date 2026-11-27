@@ -622,3 +622,95 @@ test("organizeInboxFile retries on 422 non-fast-forward and preserves concurrent
   assert.match(finalLog, /Dodano finanse/);
   assert.match(finalLog, /Dodano przypomnienie o telefonie do rodziców/);
 });
+
+test("organizeInboxFile caps retries at maxAttempts=3 (poison-pill protection) unless force=true", async () => {
+  const inboxPath = "raw/inbox/2026-11-27T10-00-00Z-waveshare-154-uszkodzona.md";
+  const { client, files } = createInMemoryGitHubVaultClient({
+    "SCHEMA.md": "# SCHEMA\nPARA + Dziennik",
+    "wiki/index.md": "---\ntitle: Spis treści\nslug: index\n---\n\n# Spis treści\n\n## System\n- [[log|Dziennik zmian]]\n",
+    "wiki/log.md": "---\ntitle: Dziennik zmian\nslug: log\n---\n\n# Dziennik zmian\n",
+    [inboxPath]: [
+      "---",
+      "created_at: 2026-11-27T10:00:00Z",
+      "source: waveshare-154",
+      "type: voice-note",
+      "tags: [inbox]",
+      "---",
+      "",
+      "# Uszkodzona notatka",
+      "",
+      "Test limitu ponowień.",
+    ].join("\n"),
+  });
+
+  const store = createInMemoryVaultStore();
+  let classifyCalls = 0;
+
+  for (let i = 1; i <= 3; i++) {
+    const res = await organizeInboxFile({
+      inboxRepoPath: inboxPath,
+      vaultClient: client,
+      store,
+      maxAttempts: 3,
+      enablePlanningAgent: false,
+      now: () => new Date(`2026-11-27T10:0${i}:00Z`),
+      classifyNote: async () => {
+        classifyCalls++;
+        throw new Error("Transient parse failure");
+      },
+    });
+    assert.equal(res.status, "error");
+    assert.equal((await store.getInboxJob(inboxPath))?.attempts, i);
+  }
+  assert.equal(classifyCalls, 3);
+  assert.equal(files.has(inboxPath), true);
+
+  // 4th attempt without force is skipped (poison-pill cap reached)
+  const skippedRes = await organizeInboxFile({
+    inboxRepoPath: inboxPath,
+    vaultClient: client,
+    store,
+    maxAttempts: 3,
+    enablePlanningAgent: false,
+    now: () => new Date("2026-11-27T10:05:00Z"),
+    classifyNote: async () => {
+      classifyCalls++;
+      throw new Error("Should not be called");
+    },
+  });
+  assert.equal(skippedRes.status, "skipped");
+  assert.equal(skippedRes.reason, "max_attempts_reached");
+  assert.equal(classifyCalls, 3);
+
+  // 5th attempt with force=true resets attempts to 1 and succeeds
+  const forcedRes = await organizeInboxFile({
+    inboxRepoPath: inboxPath,
+    vaultClient: client,
+    store,
+    maxAttempts: 3,
+    force: true,
+    enablePlanningAgent: false,
+    now: () => new Date("2026-11-27T10:06:00Z"),
+    classifyNote: async () => {
+      classifyCalls++;
+      return {
+        intent: "journal",
+        targetPath: "wiki/dziennik/2026-11-27.md",
+        title: "Dziennik 2026-11-27",
+        summary: "Test wymuszonego ponowienia.",
+        tags: ["dziennik"],
+        relatedLinks: [],
+        sectionHeading: "Wymuszone ponowienie",
+        contentMarkdown: "Przeszło po force=true.",
+        tasks: [],
+        indexSection: "Dziennik",
+        indexDescription: "Zapiski z 2026-11-27.",
+        logEntry: "Dopisano wpis po force=true",
+      };
+    },
+  });
+  assert.equal(forcedRes.status, "processed");
+  assert.equal(classifyCalls, 4);
+  assert.equal(files.has(inboxPath), false);
+  assert.equal((await store.getInboxJob(inboxPath))?.attempts, 1);
+});
