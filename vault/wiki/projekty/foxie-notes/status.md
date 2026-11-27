@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T12:20:00Z
+updated_at: 2026-11-27T12:40:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -45,12 +45,13 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
      - **Kurator „Ogrodnik” (`gardenerAgent.ts`, `weeklyGardener` niedz. 04:00 `Europe/Warsaw` + `POST /api/agents/gardener`):** audytuje i naprawia `wiki/index.md` (brakujące/martwe wpisy), delikatnie pielęgnuje powiązania `[[wikilinks]]` bezpośrednio na `main` (z ochroną plików systemowych i `foxie-notes/**`) oraz posiada retry/fallback przy `503` Gemini. Zweryfikowano na żywo przez `POST /api/agents/gardener` (`skipLlm: true` -> `200 vault_already_clean`).
      - **Przegląd Tygodniowy (`weeklyReviewAgent.ts`, `weeklyReview` niedz. 19:00 `Europe/Warsaw` + `POST /api/agents/weekly-review`):** generuje `wiki/dziennik/tydzien-YYYY-Www.md` z dniówek, `wiki/log.md`, otwartych zadań i pomysłów (z 3-krotnym retry przy `503`/`429` Gemini; w trakcie testu na żywo upstream Gemini miał okresowy szczyt obciążenia `503`/timeout).
      - Skrypt `npm run vault:overview` zapewnia pełny przegląd zdalnego vaulta (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/` i integralność `wiki/index.md`).
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `29/29` przypadkach (`tsc` + `node --test`).
+   - **Cykl życia zadań, `POST /api/tasks/toggle` i wykluczenie `research.md` (`wikiParser.ts` + `wikiSync.ts` + `researchAgent.ts`):** `syncGitHubPush` nie zasila już kolekcji `tasks` checkboxami z raportów `**/research.md`, `index.md` ani `log.md`, `researchAgent` formatuje `## Następne kroki` jako zwykłe punkty i automatycznie zamyka otwarte zadania `- [ ] ...research...` w notatce nadrzędnej, a `POST /api/tasks/toggle` pozwala odhaczać/otwierać zadania bezpośrednio w Markdownie na GitHubie i natychmiastowo w Firestore.
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `31/31` przypadkach (`tsc` + `node --test`).
 
 4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
    - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).
    - Ekran logowania Google (`LoginPage.tsx` + `firebase.ts`) z blokadą dostępu poza `ALLOWED_USER_EMAIL` oraz obsługą `auth/unauthorized-domain` dla Vercel.
-   - Zakładka **Do zrobienia** (`TasksView.tsx`: zadania na żywo z Firestore `tasks` + szybkie dodawanie na `POST /api/capture`), **Wiki** (`WikiView.tsx`: spis `wiki_meta/index` pogrupowany wg PARA + Dziennik, wyszukiwarka, renderer Markdowna z klikalnymi `[[wikilinks]]` i akcjami Research PR / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs`, batch organizer, przyciski **Ogrodnik Wiki** i **Przegląd tygodniowy** oraz formularz **Polecenie dla Kuratora Wiki** z klikalnymi wynikowymi `[[slug]]`). Build `npm --prefix web run build` OK (`6.23 s`).
+   - Zakładka **Do zrobienia** (`TasksView.tsx`: zwijany Quick Capture na `POST /api/capture`, klikalne checkboxy podpięte pod `POST /api/tasks/toggle` z optymistycznym stanem, filtry statusu, kategorii PARA i `#tagów` oraz zwijane karty zgrupowane według tematów/stron z tytułami z `wiki_meta/index`), **Wiki** (`WikiView.tsx`: filtry kategorii `Obszary`/`Pomysły`/`Dziennik`/`Projekty`/`Zasoby`, dynamiczne tagi, zagnieżdżanie raportów `↳ Raport Research` pod notatką główną, zwijane grupy PARA, czytelne ścieżki i linki powrotne, akcje Research / Google Sync) oraz **Agenci** (`AgentsActivityView.tsx`: podgląd `inbox_jobs`, batch organizer, przyciski **Ogrodnik Wiki** i **Przegląd tygodniowy** oraz formularz **Polecenie dla Kuratora Wiki** z klikalnymi wynikowymi `[[slug]]`). Build `npm --prefix web run build` OK (`5.87 s`).
    - Konfiguracja Vercel w [`vercel.json`](../../../vercel.json) i [`web/vercel.json`](../../../web/vercel.json) (rewrite `/api/*` -> Cloud Function `api` + SPA fallback), lokalny gitignorowany `web/.env.local`.
 
 ## Kluczowe decyzje i pułapki

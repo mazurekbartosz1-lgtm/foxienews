@@ -3,6 +3,7 @@ import type {
   GardenerRunResponse,
   PlanRunResponse,
   ResearchRunResponse,
+  ToggleTaskResponse,
   VaultCommandRunResponse,
   WeeklyReviewRunResponse,
 } from "../types";
@@ -117,5 +118,16 @@ export async function triggerWeeklyReview(
   return apiFetch<WeeklyReviewRunResponse>("/api/agents/weekly-review", {
     method: "POST",
     body: JSON.stringify({ force }),
+  });
+}
+
+export async function toggleTaskStatus(params: {
+  sourcePath: string;
+  text: string;
+  completed: boolean;
+}): Promise<ToggleTaskResponse> {
+  return apiFetch<ToggleTaskResponse>("/api/tasks/toggle", {
+    method: "POST",
+    body: JSON.stringify(params),
   });
 }

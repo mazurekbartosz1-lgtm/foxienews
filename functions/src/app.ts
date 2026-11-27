@@ -49,9 +49,17 @@ import {
   runWeeklyReviewAgent,
   type GenerateWeeklyReviewFn,
 } from "./services/weeklyReviewAgent.js";
-import { normalizeSlug, parseFrontmatter } from "./services/wikiParser.js";
+import {
+  buildWikiPageDoc,
+  extractTasksFromMarkdown,
+  normalizeSlug,
+  parseFrontmatter,
+  toggleTaskInMarkdown,
+} from "./services/wikiParser.js";
 import {
   extractNewInboxFilesFromPush,
+  extractVaultRelativePath,
+  isTaskSourceExcluded,
   syncGitHubPush,
   verifyGitHubWebhookSignature,
   type GitHubPushPayload,
@@ -61,6 +69,7 @@ import type {
   CaptureResponse,
   CaptureSource,
   OrganizeInboxResult,
+  ToggleTaskResponse,
 } from "./types/api.js";
 
 interface RawBodyRequest extends express.Request {
@@ -308,6 +317,103 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message = err instanceof Error ? err.message : "Failed to load wiki page";
       console.error("[/api/wiki/page] Error:", message);
       res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/tasks/toggle", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as {
+      sourcePath?: unknown;
+      text?: unknown;
+      completed?: unknown;
+    };
+
+    const sourcePath = typeof body.sourcePath === "string" ? body.sourcePath.trim() : "";
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    const completed = body.completed;
+
+    if (!sourcePath || !text || typeof completed !== "boolean") {
+      res.status(400).json({
+        error: "Provide non-empty 'sourcePath', 'text', and boolean 'completed'",
+      });
+      return;
+    }
+
+    const relativePath = extractVaultRelativePath(
+      sourcePath,
+      process.env.GITHUB_VAULT_PREFIX,
+    );
+    if (
+      !relativePath ||
+      relativePath.split("/").some((segment) => segment === "..") ||
+      !relativePath.toLowerCase().startsWith("wiki/") ||
+      !/\.md$/i.test(relativePath)
+    ) {
+      res.status(400).json({ error: "Invalid task sourcePath (expected wiki/*.md)" });
+      return;
+    }
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const existing = await client.fetchFile(sourcePath);
+      if (existing === null) {
+        res.status(404).json({ error: `Wiki file not found: ${sourcePath}` });
+        return;
+      }
+
+      const updatedAtIso = getNow().toISOString().replace(/\.\d{3}Z$/, "Z");
+      const toggled = toggleTaskInMarkdown({
+        markdown: existing,
+        targetText: text,
+        completed,
+        updatedAtIso,
+      });
+
+      if (!toggled.found) {
+        res.status(404).json({ error: "Task not found in source file" });
+        return;
+      }
+
+      let commitSha: string | undefined;
+      if (toggled.changed) {
+        const commitRes = await client.commitAtomicChanges({
+          commitMessage: `agent(tasks): ${completed ? "done" : "reopen"} ${text.slice(0, 60)}`,
+          changes: [{ path: sourcePath, content: toggled.markdown }],
+        });
+        commitSha = commitRes.commitSha;
+
+        const page = buildWikiPageDoc({
+          path: sourcePath,
+          relativePath,
+          markdown: toggled.markdown,
+          updatedAt: updatedAtIso,
+        });
+        await vaultStore.upsertWikiPage(page);
+
+        const nextTasks = isTaskSourceExcluded(relativePath)
+          ? []
+          : extractTasksFromMarkdown({
+              markdown: toggled.markdown,
+              sourcePath,
+              sourceSlug: page.slug,
+              updatedAt: updatedAtIso,
+            });
+        await vaultStore.replaceTasksForSource(sourcePath, nextTasks);
+      }
+
+      const payload: ToggleTaskResponse = {
+        ok: true,
+        sourcePath,
+        text,
+        completed,
+        changed: toggled.changed,
+        ...(commitSha ? { commitSha } : {}),
+      };
+      res.json(payload);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to toggle task";
+      console.error("[/api/tasks/toggle] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
     }
   });
 

@@ -177,7 +177,19 @@ test("runResearchAgent publishes directly to main in matching PARA category, upd
   const { client, branches, openPrs } = createResearchMockVaultClient({
     "wiki/index.md": "---\ntitle: Spis treści\nslug: index\n---\n\n# Spis treści\n\n## Obszary\n- [[obszary/zdrowie/samopoczucie|Zdrowie i samopoczucie]] — Monitorowanie samopoczucia.\n",
     "wiki/log.md": "---\ntitle: Log zmian\nslug: log\n---\n\n# Log zmian\n",
-    "wiki/obszary/zdrowie/samopoczucie.md": "---\ntitle: Zdrowie i samopoczucie\n---\n\n# Zdrowie i samopoczucie\n\nSpadek energii po biegu 8 km.\n",
+    "wiki/obszary/zdrowie/samopoczucie.md": [
+      "---",
+      "title: Zdrowie i samopoczucie",
+      "---",
+      "",
+      "# Zdrowie i samopoczucie",
+      "",
+      "Spadek energii po biegu 8 km.",
+      "",
+      "## Zadania",
+      "- [ ] Zrobić research regeneracji po biegu",
+      "- [ ] Zapisać się na wizytę kontrolną",
+    ].join("\n"),
   });
 
   let callCount = 0;
@@ -221,6 +233,14 @@ test("runResearchAgent publishes directly to main in matching PARA category, upd
   assert.match(
     mainFiles.get("wiki/obszary/zdrowie/samopoczucie.md") ?? "",
     /## Powiązany research[\s\S]*\[\[obszary\/zdrowie\/samopoczucie\/research\|Research: Regeneracja po biegu\]\]/,
+  );
+  assert.match(
+    mainFiles.get("wiki/obszary/zdrowie/samopoczucie.md") ?? "",
+    /- \[x\] Zrobić research regeneracji po biegu/,
+  );
+  assert.match(
+    mainFiles.get("wiki/obszary/zdrowie/samopoczucie.md") ?? "",
+    /- \[ \] Zapisać się na wizytę kontrolną/,
   );
 
   const skipped = await runResearchAgent({

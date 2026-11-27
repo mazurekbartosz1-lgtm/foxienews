@@ -73,6 +73,15 @@ function isVaultMarkdownFile(relativePath: string): boolean {
   return relativePath.startsWith("wiki/") || relativePath.startsWith("raw/inbox/");
 }
 
+export function isTaskSourceExcluded(relativePath: string): boolean {
+  const clean = relativePath.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+  return (
+    clean === "wiki/index.md" ||
+    clean === "wiki/log.md" ||
+    /(^|\/)research\.md$/i.test(clean)
+  );
+}
+
 function isAgentOrSyncCommitMessage(message: string | undefined): boolean {
   if (!message) return false;
   const trimmed = message.trim().toLowerCase();
@@ -177,12 +186,14 @@ export async function syncGitHubPush(params: {
       }
     }
 
-    const tasks = extractTasksFromMarkdown({
-      markdown,
-      sourcePath: repoPath,
-      sourceSlug,
-      updatedAt,
-    });
+    const tasks = isTaskSourceExcluded(relativePath)
+      ? []
+      : extractTasksFromMarkdown({
+          markdown,
+          sourcePath: repoPath,
+          sourceSlug,
+          updatedAt,
+        });
     await params.store.replaceTasksForSource(repoPath, tasks);
     syncedTaskSources++;
   }

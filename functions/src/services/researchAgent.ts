@@ -260,7 +260,7 @@ Użyj dokładnie poniższych sekcji ## w tej kolejności:
 (jasny wybór najlepszego kierunku i krótkie uzasadnienie)
 
 ## Następne kroki
-(3–5 konkretnych zadań w formacie GitHub/Obsidian checkboxów \`- [ ] ...\`, zwięzłych i wykonalnych)`;
+(3–5 konkretnych propozycji dalszych kroków w formacie zwykłych wypunktowań \`- ...\` — NIE używaj checkboxów \`- [ ]\`, żeby nie zaśmiecać głównej listy zadań użytkownika)`;
 
   let response: Awaited<ReturnType<typeof ai.models.generateContent>>;
   let grounded = true;
@@ -472,26 +472,73 @@ tags: [log]
   return `${withTimestamp.trimEnd()}\n\n${dayHeading}\n${line}\n`;
 }
 
+const RESEARCH_TASK_REGEX =
+  /(?:^|[\s(["'])(?:research|risercz|zbadac|zbadać)(?=$|[\s.,:;!?)\]"'])/i;
+
+function autoCheckParentResearchTasks(markdown: string): {
+  markdown: string;
+  checkedAny: boolean;
+} {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const fmMatch = normalized.match(/^---\n[\s\S]*?\n---(?:\n|$)/);
+  const fmBlock = fmMatch ? fmMatch[0] : "";
+  const body = fmMatch ? normalized.slice(fmBlock.length) : normalized;
+
+  const lines = body.split("\n");
+  let inCodeBlock = false;
+  let checkedAny = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*(```|~~~)/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+
+    const match = line.match(/^(\s*[-*]\s+\[) (\]\s+)(.+)$/);
+    if (!match) continue;
+
+    if (RESEARCH_TASK_REGEX.test(match[3])) {
+      lines[i] = `${match[1]}x${match[2]}${match[3]}`;
+      checkedAny = true;
+    }
+  }
+
+  if (!checkedAny) {
+    return { markdown: normalized, checkedAny: false };
+  }
+
+  return { markdown: `${fmBlock}${lines.join("\n")}`, checkedAny: true };
+}
+
 function appendResearchLinkToParentPage(
   parentMarkdown: string,
   reportSlug: string,
   topicTitle: string,
   updatedAtIso: string,
 ): string | null {
-  const normalized = parentMarkdown.replace(/\r\n/g, "\n");
-  if (
-    normalized.includes(`[[${reportSlug}|`) ||
-    normalized.includes(`[[${reportSlug}]]`)
-  ) {
+  const { markdown: withCheckedTasks, checkedAny } =
+    autoCheckParentResearchTasks(parentMarkdown);
+
+  const hasLink =
+    withCheckedTasks.includes(`[[${reportSlug}|`) ||
+    withCheckedTasks.includes(`[[${reportSlug}]]`);
+
+  if (hasLink && !checkedAny) {
     return null;
   }
 
-  const linkLine = `- [[${reportSlug}|Research: ${topicTitle}]]`;
-  let updated = normalized;
+  let updated = withCheckedTasks;
   if (/^updated_at:/m.test(updated)) {
     updated = updated.replace(/^updated_at:.*$/m, `updated_at: ${updatedAtIso}`);
   }
 
+  if (hasLink) {
+    return updated;
+  }
+
+  const linkLine = `- [[${reportSlug}|Research: ${topicTitle}]]`;
   const heading = "## Powiązany research";
   if (updated.includes(heading)) {
     const idx = updated.indexOf(heading) + heading.length;

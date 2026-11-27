@@ -185,6 +185,34 @@ function inferPriority(tags: readonly string[]): string | undefined {
   return undefined;
 }
 
+export function cleanTaskLineText(rawText: string): {
+  cleanText: string;
+  dueDate?: string;
+  tags: string[];
+} {
+  let text = rawText.trim();
+
+  let dueDate: string | undefined;
+  const dueMatch = text.match(/@due\((\d{4}-\d{2}-\d{2})\)/i);
+  if (dueMatch) {
+    dueDate = dueMatch[1];
+    text = text.replace(/@due\(\d{4}-\d{2}-\d{2}\)/gi, " ");
+  }
+
+  const foundTags: string[] = [];
+  text = text.replace(
+    /(^|\s)#([A-Za-z0-9_ąćęłńóśźżĄĆĘŁŃÓŚŹŻ][A-Za-z0-9_\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]*)/g,
+    (_full, prefix: string, tag: string) => {
+      foundTags.push(tag.toLowerCase());
+      return prefix;
+    },
+  );
+
+  const cleanText = text.replace(/\s+/g, " ").trim();
+  const tags = Array.from(new Set(foundTags));
+  return { cleanText, dueDate, tags };
+}
+
 export function extractTasksFromMarkdown(params: {
   markdown: string;
   sourcePath: string;
@@ -208,28 +236,9 @@ export function extractTasksFromMarkdown(params: {
     if (!match) continue;
 
     const completed = match[1].toLowerCase() === "x";
-    let text = match[2].trim();
-
-    let dueDate: string | undefined;
-    const dueMatch = text.match(/@due\((\d{4}-\d{2}-\d{2})\)/i);
-    if (dueMatch) {
-      dueDate = dueMatch[1];
-      text = text.replace(/@due\(\d{4}-\d{2}-\d{2}\)/gi, " ");
-    }
-
-    const foundTags: string[] = [];
-    text = text.replace(
-      /(^|\s)#([A-Za-z0-9_ąćęłńóśźżĄĆĘŁŃÓŚŹŻ][A-Za-z0-9_\-ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]*)/g,
-      (_full, prefix: string, tag: string) => {
-        foundTags.push(tag.toLowerCase());
-        return prefix;
-      },
-    );
-
-    const cleanText = text.replace(/\s+/g, " ").trim();
+    const { cleanText, dueDate, tags } = cleanTaskLineText(match[2]);
     if (!cleanText) continue;
 
-    const tags = Array.from(new Set(foundTags));
     const priority = inferPriority(tags);
 
     const occKey = `${completed ? "1" : "0"}:${cleanText}`;
@@ -258,6 +267,70 @@ export function extractTasksFromMarkdown(params: {
   }
 
   return tasks;
+}
+
+export function toggleTaskInMarkdown(params: {
+  markdown: string;
+  targetText: string;
+  completed: boolean;
+  updatedAtIso?: string;
+}): { markdown: string; found: boolean; changed: boolean } {
+  const normalized = params.markdown.replace(/\r\n/g, "\n");
+  const target = params.targetText.replace(/\s+/g, " ").trim();
+  const fmMatch = normalized.match(/^---\n[\s\S]*?\n---(?:\n|$)/);
+  const fmBlock = fmMatch ? fmMatch[0] : "";
+  const body = fmMatch ? normalized.slice(fmBlock.length) : normalized;
+
+  const lines = body.split("\n");
+  let inCodeBlock = false;
+  let firstMatchingDiffIndex = -1;
+  let firstMatchingSameIndex = -1;
+
+  const parsedLines = lines.map((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      return null;
+    }
+    if (inCodeBlock) return null;
+
+    const match = line.match(/^(\s*[-*]\s+\[)([ xX])(\]\s+)(.+)$/);
+    if (!match) return null;
+
+    const { cleanText } = cleanTaskLineText(match[4]);
+    if (cleanText !== target) return null;
+
+    const currentlyCompleted = match[2].toLowerCase() === "x";
+    if (currentlyCompleted !== params.completed) {
+      if (firstMatchingDiffIndex === -1) firstMatchingDiffIndex = index;
+    } else if (firstMatchingSameIndex === -1) {
+      firstMatchingSameIndex = index;
+    }
+
+    return match;
+  });
+
+  if (firstMatchingDiffIndex === -1 && firstMatchingSameIndex === -1) {
+    return { markdown: normalized, found: false, changed: false };
+  }
+
+  if (firstMatchingDiffIndex === -1) {
+    return { markdown: normalized, found: true, changed: false };
+  }
+
+  const matched = parsedLines[firstMatchingDiffIndex]!;
+  lines[firstMatchingDiffIndex] =
+    `${matched[1]}${params.completed ? "x" : " "}${matched[3]}${matched[4]}`;
+
+  let nextFm = fmBlock;
+  if (nextFm && params.updatedAtIso && /^updated_at:/im.test(nextFm)) {
+    nextFm = nextFm.replace(/^updated_at:.*$/im, `updated_at: ${params.updatedAtIso}`);
+  }
+
+  return {
+    markdown: `${nextFm}${lines.join("\n")}`,
+    found: true,
+    changed: true,
+  };
 }
 
 function extractFirstHeading(body: string): string | undefined {

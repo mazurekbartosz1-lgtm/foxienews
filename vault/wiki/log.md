@@ -1,13 +1,18 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T12:20:00Z
+updated_at: 2026-11-27T12:40:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Domknięcie cyklu życia zadań (`POST /api/tasks/toggle` + wykluczenie `research.md`) oraz spokojniejszy, zorganizowany UI (`TasksView` + `WikiView`):**
+  - Zidentyfikowano źródło 24 otwartych zadań w `obsydianandwiki` (8 sugestii z raportów `*/research.md`, 7 wykonanych ale niezamkniętych zadań, 4 duplikaty/checklisty dev vs 5 realnych zadań osobistych).
+  - Dodano `toggleTaskInMarkdown` w [`wikiParser.ts`](../../../functions/src/services/wikiParser.ts), wykluczenie `**/research.md`, `index.md` i `log.md` w [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts), automatyczne odhaczanie zadań `research` w notatce źródłowej oraz wypunktowania zamiast checkboxów w [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts), a także endpoint `POST /api/tasks/toggle` w [`app.ts`](../../../functions/src/app.ts) (`31/31` testów pass, wdrożono w Firebase).
+  - Przeprojektowano [`TasksView.tsx`](../../../web/src/components/TasksView.tsx) (domyślnie zwinięty Quick Capture, filtry statusu/kategorii/tagów, grupowanie po tematach w zwijanych kartach, klikalne checkboxy) oraz [`WikiView.tsx`](../../../web/src/components/WikiView.tsx) (pigułki kategorii, dynamiczne tagi, zagnieżdżanie `*/research` pod stroną źródłową, zwijane grupy PARA i czytelniejszy czytnik; `web` build OK).
+  - Wyczyszczono zaległe zamknięte zadania w `obsydianandwiki` oraz zaktualizowano status `board_pins.h` w [`etap-1-urzadzenie.md`](../../../vault/wiki/projekty/foxie-notes/zadania/etap-1-urzadzenie.md).
 - **Cykliczni agenci w chmurze (`weeklyGardener` + `weeklyReview`) oraz przyciski w `web/`:**
   - Dodano [`gardenerAgent.ts`](../../../functions/src/services/gardenerAgent.ts) (deterministyczny audyt `wiki/index.md` + delikatna pielęgnacja powiązań `[[wikilinks]]` na `main` z ochroną plików chronionych i `foxie-notes/**`) oraz [`weeklyReviewAgent.ts`](../../../functions/src/services/weeklyReviewAgent.ts) (`wiki/dziennik/tydzien-YYYY-Www.md` z dniówek, `log.md`, otwartych zadań i pomysłów). W obu serwisach dodano 3-krotny retry przy chwilowym `503`/`429` Gemini.
   - Podpięto harmonogramy `weeklyGardener` (`0 4 * * 0` `Europe/Warsaw`) i `weeklyReview` (`0 19 * * 0` `Europe/Warsaw`) w [`index.ts`](../../../functions/src/index.ts), endpointy `POST /api/agents/gardener` i `POST /api/agents/weekly-review` w [`app.ts`](../../../functions/src/app.ts), testy [`scheduledAgents.test.ts`](../../../functions/src/__tests__/scheduledAgents.test.ts) (`29/29` pass) oraz przyciski **Ogrodnik Wiki** i **Przegląd tygodniowy** w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`web` build OK).

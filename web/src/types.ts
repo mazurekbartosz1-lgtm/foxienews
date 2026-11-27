@@ -141,3 +141,12 @@ export interface WeeklyReviewRunResponse {
   commitSha?: string;
   reason?: string;
 }
+
+export interface ToggleTaskResponse {
+  ok: true;
+  sourcePath: string;
+  text: string;
+  completed: boolean;
+  changed: boolean;
+  commitSha?: string;
+}

@@ -5,10 +5,12 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createApp } from "../app.js";
 import { createInMemoryVaultStore } from "../services/firestoreStore.js";
+import type { GitHubVaultClient } from "../services/github.js";
 import {
   extractTasksFromMarkdown,
   markdownToPlainText,
   parseFrontmatter,
+  toggleTaskInMarkdown,
 } from "../services/wikiParser.js";
 import { verifyGitHubWebhookSignature } from "../services/wikiSync.js";
 
@@ -328,6 +330,250 @@ test("GitHub webhook syncs wiki pages, tasks, and serves GET /api/wiki/index & /
       headers: { "X-API-Key": "test-device-key" },
     });
     assert.equal(deletedPageRes.status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+  }
+});
+
+test("toggleTaskInMarkdown toggles matching checkbox, preserves metadata, skips code blocks", () => {
+  const md = [
+    "---",
+    "title: Zakupy",
+    "updated_at: 2026-11-26T06:00:00Z",
+    "---",
+    "",
+    "```markdown",
+    "- [ ] Kupić mleko @due(2026-11-28) #dom",
+    "```",
+    "",
+    "- [ ] Kupić mleko @due(2026-11-28) #dom",
+    "- [x] Kupić chleb",
+  ].join("\n");
+
+  const doneRes = toggleTaskInMarkdown({
+    markdown: md,
+    targetText: "Kupić mleko",
+    completed: true,
+    updatedAtIso: "2026-11-27T12:00:00Z",
+  });
+  assert.equal(doneRes.found, true);
+  assert.equal(doneRes.changed, true);
+  assert.match(doneRes.markdown, /^updated_at: 2026-11-27T12:00:00Z/m);
+  assert.match(
+    doneRes.markdown,
+    /```markdown\n- \[ \] Kupić mleko @due\(2026-11-28\) #dom\n```/,
+  );
+  assert.match(doneRes.markdown, /\n- \[x\] Kupić mleko @due\(2026-11-28\) #dom/);
+
+  const reopenRes = toggleTaskInMarkdown({
+    markdown: doneRes.markdown,
+    targetText: "Kupić mleko",
+    completed: false,
+    updatedAtIso: "2026-11-27T12:05:00Z",
+  });
+  assert.equal(reopenRes.found, true);
+  assert.equal(reopenRes.changed, true);
+  assert.match(reopenRes.markdown, /\n- \[ \] Kupić mleko @due\(2026-11-28\) #dom/);
+
+  const missing = toggleTaskInMarkdown({
+    markdown: md,
+    targetText: "Nieistniejące zadanie",
+    completed: true,
+  });
+  assert.equal(missing.found, false);
+  assert.equal(missing.changed, false);
+});
+
+test("syncGitHubPush excludes research.md tasks and POST /api/tasks/toggle updates vault + Firestore store", async () => {
+  process.env.DEVICE_API_KEY = "test-device-key";
+  process.env.GITHUB_WEBHOOK_SECRET = "hook-secret";
+  process.env.GITHUB_BRANCH = "main";
+  process.env.GITHUB_VAULT_PREFIX = "vault";
+
+  const files = new Map<string, string>([
+    [
+      "vault/wiki/obszary/dom/zakupy.md",
+      [
+        "---",
+        "title: Zakupy domowe",
+        "slug: obszary/dom/zakupy",
+        "updated_at: 2026-11-26T10:00:00Z",
+        "---",
+        "",
+        "- [ ] Pójść do sklepu po zakupy @due(2026-11-28) #dom",
+      ].join("\n"),
+    ],
+    [
+      "vault/wiki/pomysly/wyjazd/research.md",
+      [
+        "---",
+        "title: Research: Wyjazd",
+        "slug: pomysly/wyjazd/research",
+        "---",
+        "",
+        "- [ ] Sugestia z raportu, nie powinna trafić do zadań",
+      ].join("\n"),
+    ],
+  ]);
+
+  const store = createInMemoryVaultStore();
+  // Seed a stale research.md task in store to confirm sync cleans it up
+  await store.replaceTasksForSource("vault/wiki/pomysly/wyjazd/research.md", [
+    {
+      id: "stale-research-task",
+      text: "Sugestia z raportu, nie powinna trafić do zadań",
+      completed: false,
+      sourcePath: "vault/wiki/pomysly/wyjazd/research.md",
+      sourceSlug: "pomysly/wyjazd/research",
+      updatedAt: "2026-11-26T09:00:00Z",
+    },
+  ]);
+
+  const commits: string[] = [];
+  const vaultClient: GitHubVaultClient = {
+    async listTree() {
+      return [];
+    },
+    async fetchFile(filePath) {
+      return files.get(filePath) ?? null;
+    },
+    async commitAtomicChanges({ commitMessage, changes }) {
+      commits.push(commitMessage);
+      for (const ch of changes) {
+        if (ch.content === null) files.delete(ch.path);
+        else files.set(ch.path, ch.content);
+      }
+      return { commitSha: "toggle-sha-1", treeSha: "tree-1", branch: "main" };
+    },
+    async createBranch() {
+      return "base-sha";
+    },
+    async findOpenPullRequest() {
+      return null;
+    },
+    async createPullRequest() {
+      return { number: 1, url: "https://example.test/pr/1", branch: "main" };
+    },
+  };
+
+  const app = createApp({
+    now: () => new Date("2026-11-27T13:00:00Z"),
+    vaultStore: store,
+    fetchVaultFile: async (p) => files.get(p) ?? null,
+    vaultClient,
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const addr = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  try {
+    // Webhook push cleans stale research.md task and syncs zakupy.md task
+    const pushBody = JSON.stringify({
+      ref: "refs/heads/main",
+      after: "c-sync",
+      commits: [
+        {
+          modified: [
+            "vault/wiki/obszary/dom/zakupy.md",
+            "vault/wiki/pomysly/wyjazd/research.md",
+          ],
+        },
+      ],
+    });
+    const hookRes = await fetch(`${baseUrl}/api/webhook/github`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": "push",
+        "X-Hub-Signature-256": signPayload(pushBody, "hook-secret"),
+      },
+      body: pushBody,
+    });
+    assert.equal(hookRes.status, 200);
+    const tasksAfterPush = store.getAllTasks();
+    assert.equal(tasksAfterPush.length, 1);
+    assert.equal(tasksAfterPush[0].sourceSlug, "obszary/dom/zakupy");
+    assert.equal(tasksAfterPush[0].completed, false);
+
+    // Unauthenticated toggle -> 401
+    const unauth = await fetch(`${baseUrl}/api/tasks/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourcePath: "vault/wiki/obszary/dom/zakupy.md",
+        text: "Pójść do sklepu po zakupy",
+        completed: true,
+      }),
+    });
+    assert.equal(unauth.status, 401);
+
+    // Invalid sourcePath outside wiki/ -> 400
+    const badPath = await fetch(`${baseUrl}/api/tasks/toggle`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": "test-device-key",
+      },
+      body: JSON.stringify({
+        sourcePath: "vault/raw/inbox/note.md",
+        text: "Pójść do sklepu po zakupy",
+        completed: true,
+      }),
+    });
+    assert.equal(badPath.status, 400);
+
+    // Non-existent task -> 404
+    const missingTask = await fetch(`${baseUrl}/api/tasks/toggle`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": "test-device-key",
+      },
+      body: JSON.stringify({
+        sourcePath: "vault/wiki/obszary/dom/zakupy.md",
+        text: "Nie ma takiego zadania",
+        completed: true,
+      }),
+    });
+    assert.equal(missingTask.status, 404);
+
+    // Valid toggle -> 200, commits Markdown [x], updates Firestore store immediately
+    const toggleRes = await fetch(`${baseUrl}/api/tasks/toggle`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": "test-device-key",
+      },
+      body: JSON.stringify({
+        sourcePath: "vault/wiki/obszary/dom/zakupy.md",
+        text: "Pójść do sklepu po zakupy",
+        completed: true,
+      }),
+    });
+    assert.equal(toggleRes.status, 200);
+    const toggleJson = (await toggleRes.json()) as {
+      ok: boolean;
+      changed: boolean;
+      completed: boolean;
+      commitSha: string;
+    };
+    assert.equal(toggleJson.ok, true);
+    assert.equal(toggleJson.changed, true);
+    assert.equal(toggleJson.completed, true);
+    assert.equal(toggleJson.commitSha, "toggle-sha-1");
+    assert.equal(commits.length, 1);
+    assert.match(commits[0], /^agent\(tasks\): done /);
+    assert.match(
+      files.get("vault/wiki/obszary/dom/zakupy.md") ?? "",
+      /- \[x\] Pójść do sklepu po zakupy @due\(2026-11-28\) #dom/,
+    );
+    const tasksAfterToggle = store.getAllTasks();
+    assert.equal(tasksAfterToggle.length, 1);
+    assert.equal(tasksAfterToggle[0].completed, true);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),
