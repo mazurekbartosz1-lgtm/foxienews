@@ -1,13 +1,16 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T12:40:00Z
+updated_at: 2026-11-27T12:55:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Autonomiczny Agent Zamykacz Zadań (`taskReconciler`) — samoczynne zamykanie todo po akcjach, commitach i w Google Tasks:**
+  - Utworzono [`taskReconciler.ts`](../../../functions/src/services/taskReconciler.ts) z 3 warstwami domykania zadań bez ingerencji użytkownika: (1) deterministyczną (istniejący `research.md`, duplikaty zadań ukończonych), (2) dwukierunkowym synciem ukończonych zadań z Google Tasks ([`googleWorkspace.ts`](../../../functions/src/services/googleWorkspace.ts) `listTasks`), oraz (3) dowodowym dopasowaniem LLM (`>= 0.85` confidence na podstawie `wiki/log.md`, `status.md`, `zadania/*` i dniówek, z twardą ochroną ścieżek systemowych i odciskiem zmian w `wiki_meta/reconciler_state`).
+  - Podpięto automatyczne domykanie w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) (`completedTaskRefs` dla notatek głosowych/webowych, także cross-file w tym samym commicie), w webhooku GitHub po commitach `docs(vault):` ([`sync-obsidian-vault.mjs`](../../../scripts/sync-obsidian-vault.mjs) + [`app.ts`](../../../functions/src/app.ts), z ochroną anti-loop `agent(reconciler):`), w harmonogramie [`taskReconciler`](../../../functions/src/index.ts) (`every 60 minutes`), w [`vaultCommandAgent.ts`](../../../functions/src/services/vaultCommandAgent.ts) oraz jako endpoint `POST /api/agents/reconcile-tasks` + przycisk **Porządkuj zadania** w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`36/36` testów pass, `web` build OK).
 - **Domknięcie cyklu życia zadań (`POST /api/tasks/toggle` + wykluczenie `research.md`) oraz spokojniejszy, zorganizowany UI (`TasksView` + `WikiView`):**
   - Zidentyfikowano źródło 24 otwartych zadań w `obsydianandwiki` (8 sugestii z raportów `*/research.md`, 7 wykonanych ale niezamkniętych zadań, 4 duplikaty/checklisty dev vs 5 realnych zadań osobistych).
   - Dodano `toggleTaskInMarkdown` w [`wikiParser.ts`](../../../functions/src/services/wikiParser.ts), wykluczenie `**/research.md`, `index.md` i `log.md` w [`wikiSync.ts`](../../../functions/src/services/wikiSync.ts), automatyczne odhaczanie zadań `research` w notatce źródłowej oraz wypunktowania zamiast checkboxów w [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts), a także endpoint `POST /api/tasks/toggle` w [`app.ts`](../../../functions/src/app.ts) (`31/31` testów pass, wdrożono w Firebase).

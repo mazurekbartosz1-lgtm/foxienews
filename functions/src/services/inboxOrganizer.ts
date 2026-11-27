@@ -28,8 +28,15 @@ import {
   type BuildVaultCommandPlanFn,
   type SelectRelevantFilesFn,
 } from "./vaultCommandAgent.js";
-import { parseFrontmatter } from "./wikiParser.js";
-import { extractVaultRelativePath } from "./wikiSync.js";
+import { isReconcilableWikiPath } from "./taskReconciler.js";
+import {
+  buildWikiPageDoc,
+  cleanTaskLineText,
+  extractTasksFromMarkdown,
+  parseFrontmatter,
+  toggleTaskInMarkdown,
+} from "./wikiParser.js";
+import { extractVaultRelativePath, isTaskSourceExcluded } from "./wikiSync.js";
 
 export type IndexSectionName =
   | "Projekty"
@@ -37,6 +44,12 @@ export type IndexSectionName =
   | "Pomysły"
   | "Zasoby"
   | "Dziennik";
+
+export interface CompletedTaskRef {
+  sourcePath: string;
+  text: string;
+  reason?: string;
+}
 
 export interface OrganizerDecision {
   intent: NoteIntent;
@@ -48,6 +61,7 @@ export interface OrganizerDecision {
   sectionHeading?: string;
   contentMarkdown: string;
   tasks: string[];
+  completedTaskRefs?: CompletedTaskRef[];
   indexSection: IndexSectionName;
   indexDescription: string;
   logEntry: string;
@@ -60,6 +74,7 @@ export type ClassifyInboxNoteFn = (params: {
   schemaMarkdown: string;
   wikiIndexMarkdown: string;
   existingWikiPaths: string[];
+  openTasks?: Array<{ sourcePath: string; text: string }>;
   noteDate: string;
 }) => Promise<OrganizerDecision>;
 
@@ -267,6 +282,7 @@ export async function classifyInboxNoteWithGemini(params: {
   schemaMarkdown: string;
   wikiIndexMarkdown: string;
   existingWikiPaths: string[];
+  openTasks?: Array<{ sourcePath: string; text: string }>;
   noteDate: string;
 }): Promise<OrganizerDecision> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -282,6 +298,11 @@ export async function classifyInboxNoteWithGemini(params: {
       ? params.existingWikiPaths.map((p) => `- ${p}`).join("\n")
       : "(brak istniejących stron)";
 
+  const openTasksList =
+    params.openTasks && params.openTasks.length > 0
+      ? params.openTasks.map((t) => `- [${t.sourcePath}] ${t.text}`).join("\n")
+      : "(brak otwartych zadań)";
+
   const prompt = `Jesteś Agentem Organizatorem prywatnego vaulta Obsidian (taksonomia PARA + Dziennik).
 Twoim zadaniem jest przeanalizowanie nowej surowej notatki z \`raw/inbox/\` i wskazanie, gdzie i w jakiej formie ją zapisać w \`wiki/\`.
 
@@ -293,6 +314,9 @@ ${existingList}
 
 AKTUALNY SPIS TREŚCI (wiki/index.md):
 ${params.wikiIndexMarkdown}
+
+AKTUALNE OTWARTE ZADANIA UŻYTKOWNIKA:
+${openTasksList}
 
 NOWA NOTATKA DO PRZETWORZENIA (${params.inboxRelativePath}, data notatki: ${params.noteDate}):
 \`\`\`markdown
@@ -311,7 +335,8 @@ REGUŁY DECYZJI:
 3. Nigdy nie wybieraj chronionych plików: \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/projekty/foxie-notes/status.md\`, \`wiki/projekty/foxie-notes/index.md\`, \`wiki/projekty/foxie-notes/sprzet-waveshare-v2.md\` ani żadnego pliku w \`wiki/projekty/foxie-notes/zadania/\`.
 4. Zachowaj wszystkie konkretne fakty, godziny, kwoty, nazwy i zadania (z \`@due(YYYY-MM-DD)\` jeśli padła konkretna data). Konsoliduj powiązane kroki jednej sprawy w JEDNO konkretne zadanie — nie rozbijaj pojedynczej czynności na osobne meta-zadanie typu "znaleźć numer/sprawdzić adres" i właściwe wykonanie.
 5. \`contentMarkdown\` nie może zawierać YAML frontmattera ani nagłówka H1 (\`# ...\`) ani sekcji \`## Zadania\` (zadania podaj wyłącznie w polu \`tasks\`).
-6. Zwróć WYŁĄCZNIE poprawny obiekt JSON o polach:
+6. Jeśli nowa notatka wyraźnie stwierdza, że któreś z powyższych otwartych zadań zostało już wykonane, załatwione lub odwołane (np. "dzwoniłem do Toyoty, umówione", "zrobiłem zakupy", "naprawiłem X"), wpisz je do \`completedTaskRefs\` podając dokładny \`sourcePath\` i dokładny \`text\` z listy otwartych zadań. Zwróć pustą tablicę \`[]\`, jeśli notatka NIE potwierdza wykonania żadnego otwartego zadania.
+7. Zwróć WYŁĄCZNIE poprawny obiekt JSON o polach:
 {
   "intent": "knowledge" | "project" | "plan-calendar" | "todo" | "research-idea" | "journal" | "vault-command",
   "targetPath": "wiki/...",
@@ -322,6 +347,7 @@ REGUŁY DECYZJI:
   "sectionHeading": "Krótki nagłówek sekcji dla tego wpisu (max 6 słów)",
   "contentMarkdown": "Zwięzła treść po polsku w Markdown (bez H1, bez frontmattera, bez sekcji Zadania)",
   "tasks": ["zadania bez prefiksu '- [ ]'; pusta tablica jeśli brak"],
+  "completedTaskRefs": [{ "sourcePath": "wiki/...", "text": "dokładny tekst otwartego zadania", "reason": "krótki powód" }],
   "indexSection": "Projekty" | "Obszary" | "Pomysły" | "Zasoby" | "Dziennik",
   "indexDescription": "1 krótkie zdanie opisu strony do wiki/index.md",
   "logEntry": "1 krótkie zdanie do wiki/log.md co dodano/zaktualizowano",
@@ -407,6 +433,20 @@ REGUŁY DECYZJI:
     isTestNote ? ["test", "dziennik"] : [],
   );
 
+  const completedTaskRefs: CompletedTaskRef[] = [];
+  if (Array.isArray(parsed.completedTaskRefs)) {
+    for (const rawRef of parsed.completedTaskRefs) {
+      if (!rawRef || typeof rawRef !== "object") continue;
+      const obj = rawRef as Record<string, unknown>;
+      const sourcePath = typeof obj.sourcePath === "string" ? obj.sourcePath.trim() : "";
+      const text = typeof obj.text === "string" ? obj.text.trim() : "";
+      const reason = typeof obj.reason === "string" ? obj.reason.trim() : undefined;
+      if (sourcePath && text) {
+        completedTaskRefs.push({ sourcePath, text, ...(reason ? { reason } : {}) });
+      }
+    }
+  }
+
   return {
     intent: isTestNote ? "journal" : intent,
     targetPath,
@@ -421,6 +461,7 @@ REGUŁY DECYZJI:
     tasks: toStringArray(parsed.tasks).map((task) =>
       task.replace(/^\s*[-*]\s*\[[ xX]\]\s*/, "").trim(),
     ),
+    ...(completedTaskRefs.length > 0 ? { completedTaskRefs } : {}),
     indexSection: isTestNote ? "Dziennik" : indexSection,
     indexDescription,
     logEntry,
@@ -880,11 +921,12 @@ export async function organizeInboxFile(params: {
     const indexRepoPath = joinRepoPath(params.vaultPrefix, "wiki/index.md");
     const logRepoPath = joinRepoPath(params.vaultPrefix, "wiki/log.md");
 
-    const [treeEntries, schemaMd, indexMd, logMd] = await Promise.all([
+    const [treeEntries, schemaMd, indexMd, logMd, openStoreTasks] = await Promise.all([
       params.vaultClient.listTree(),
       params.vaultClient.fetchFile(schemaRepoPath),
       params.vaultClient.fetchFile(indexRepoPath),
       params.vaultClient.fetchFile(logRepoPath),
+      params.store.listOpenTasks(),
     ]);
 
     const existingWikiPaths = treeEntries
@@ -899,12 +941,19 @@ export async function organizeInboxFile(params: {
       nowDate,
     );
 
+    const openTasksForClassifier = openStoreTasks.slice(0, 40).map((t) => ({
+      sourcePath:
+        extractVaultRelativePath(t.sourcePath, params.vaultPrefix) ?? t.sourcePath,
+      text: t.text,
+    }));
+
     const decision = await classify({
       inboxRelativePath: inboxRelative,
       rawMarkdown,
       schemaMarkdown: schemaMd ?? "",
       wikiIndexMarkdown: indexMd ?? "",
       existingWikiPaths,
+      openTasks: openTasksForClassifier,
       noteDate,
     });
 
@@ -974,13 +1023,31 @@ export async function organizeInboxFile(params: {
     const targetRepoPath = joinRepoPath(params.vaultPrefix, targetRelativePath);
     const targetSlug = targetRelativePath.replace(/^wiki\//i, "").replace(/\.md$/i, "");
 
+    const validCompletedRefs = (decision.completedTaskRefs ?? [])
+      .map((ref) => {
+        const rel =
+          extractVaultRelativePath(ref.sourcePath, params.vaultPrefix) ??
+          ref.sourcePath.trim().replace(/^\/+/, "");
+        return { ...ref, rel };
+      })
+      .filter((ref) => isReconcilableWikiPath(ref.rel) && ref.text.trim().length > 0);
+
     const maxCommitAttempts = 4;
     let commitRes: { commitSha: string; treeSha: string; branch: string } | undefined;
+    let syncedCrossFileUpdates = new Map<string, { rel: string; markdown: string }>();
 
     for (let attempt = 0; attempt < maxCommitAttempts; attempt++) {
       let currentIndexMd = indexMd;
       let currentLogMd = logMd;
       let existingTargetMd: string | null = null;
+      const crossRefRelSet = Array.from(
+        new Set(
+          validCompletedRefs
+            .map((r) => r.rel)
+            .filter((rel) => rel !== targetRelativePath),
+        ),
+      );
+      const crossFileContentByRepoPath = new Map<string, string>();
 
       if (attempt > 0) {
         const backoffMs = 250 * attempt + Math.floor(Math.random() * 250);
@@ -1004,19 +1071,42 @@ export async function organizeInboxFile(params: {
           };
         }
 
-        const [freshTargetMd, freshIndexMd, freshLogMd] = await Promise.all([
+        const [freshTargetMd, freshIndexMd, freshLogMd, ...freshCross] = await Promise.all([
           params.vaultClient.fetchFile(targetRepoPath),
           params.vaultClient.fetchFile(indexRepoPath),
           params.vaultClient.fetchFile(logRepoPath),
+          ...crossRefRelSet.map(async (rel) => ({
+            repoPath: joinRepoPath(params.vaultPrefix, rel),
+            content: await params.vaultClient.fetchFile(joinRepoPath(params.vaultPrefix, rel)),
+          })),
         ]);
         existingTargetMd = freshTargetMd;
         currentIndexMd = freshIndexMd;
         currentLogMd = freshLogMd;
-      } else if (existingWikiPaths.includes(targetRelativePath)) {
-        existingTargetMd = await params.vaultClient.fetchFile(targetRepoPath);
+        for (const item of freshCross) {
+          if (item.content !== null) {
+            crossFileContentByRepoPath.set(item.repoPath, item.content);
+          }
+        }
+      } else {
+        const [maybeTarget, ...initialCross] = await Promise.all([
+          existingWikiPaths.includes(targetRelativePath)
+            ? params.vaultClient.fetchFile(targetRepoPath)
+            : Promise.resolve(null),
+          ...crossRefRelSet.map(async (rel) => ({
+            repoPath: joinRepoPath(params.vaultPrefix, rel),
+            content: await params.vaultClient.fetchFile(joinRepoPath(params.vaultPrefix, rel)),
+          })),
+        ]);
+        existingTargetMd = maybeTarget;
+        for (const item of initialCross) {
+          if (item.content !== null) {
+            crossFileContentByRepoPath.set(item.repoPath, item.content);
+          }
+        }
       }
 
-      const nextPageMarkdown = existingTargetMd
+      let nextPageMarkdown = existingTargetMd
         ? mergeIntoExistingWikiPage({
             existingMarkdown: existingTargetMd,
             targetPath: targetRelativePath,
@@ -1046,6 +1136,46 @@ export async function organizeInboxFile(params: {
             isTestNote: decision.isTestNote,
           });
 
+      let autoClosedCount = 0;
+      const attemptCrossUpdates = new Map<string, { rel: string; markdown: string }>();
+
+      for (const ref of validCompletedRefs) {
+        const cleanRefText = cleanTaskLineText(ref.text).cleanText;
+        if (!cleanRefText) continue;
+
+        if (ref.rel === targetRelativePath) {
+          const toggled = toggleTaskInMarkdown({
+            markdown: nextPageMarkdown,
+            targetText: cleanRefText,
+            completed: true,
+            updatedAtIso: nowIso,
+          });
+          if (toggled.found && toggled.changed) {
+            nextPageMarkdown = toggled.markdown;
+            autoClosedCount++;
+          }
+        } else {
+          const refRepoPath = joinRepoPath(params.vaultPrefix, ref.rel);
+          const currentCross =
+            attemptCrossUpdates.get(refRepoPath)?.markdown ??
+            crossFileContentByRepoPath.get(refRepoPath);
+          if (!currentCross) continue;
+          const toggled = toggleTaskInMarkdown({
+            markdown: currentCross,
+            targetText: cleanRefText,
+            completed: true,
+            updatedAtIso: nowIso,
+          });
+          if (toggled.found && toggled.changed) {
+            attemptCrossUpdates.set(refRepoPath, {
+              rel: ref.rel,
+              markdown: toggled.markdown,
+            });
+            autoClosedCount++;
+          }
+        }
+      }
+
       const { markdown: nextIndexMd, changed: indexChanged } = updateWikiIndexMarkdown({
         existingIndexMarkdown: currentIndexMd,
         slug: targetSlug,
@@ -1055,12 +1185,17 @@ export async function organizeInboxFile(params: {
         updatedAtIso: nowIso,
       });
 
+      const effectiveLogEntry =
+        autoClosedCount > 0
+          ? `${decision.logEntry} (automatycznie zamknięto ${autoClosedCount} powiązanych zadań)`
+          : decision.logEntry;
+
       const nextLogMd = prependWikiLogMarkdown({
         existingLogMarkdown: currentLogMd,
         dateStr: nowIso.slice(0, 10),
         updatedAtIso: nowIso,
         intent: decision.intent,
-        logEntry: decision.logEntry,
+        logEntry: effectiveLogEntry,
         slug: targetSlug,
         title: decision.title,
         processedPath: processedRelativePath,
@@ -1068,6 +1203,10 @@ export async function organizeInboxFile(params: {
 
       const changes: AtomicFileChange[] = [
         { path: targetRepoPath, content: nextPageMarkdown },
+        ...Array.from(attemptCrossUpdates.entries()).map(([repoPath, data]) => ({
+          path: repoPath,
+          content: data.markdown,
+        })),
         ...(indexChanged ? [{ path: indexRepoPath, content: nextIndexMd }] : []),
         { path: logRepoPath, content: nextLogMd },
         { path: processedRepoPath, content: rawMarkdown },
@@ -1080,6 +1219,7 @@ export async function organizeInboxFile(params: {
           commitMessage: `agent(organizer): ${decision.title} (${decision.intent})`,
           maxRetries: 0,
         });
+        syncedCrossFileUpdates = attemptCrossUpdates;
         break;
       } catch (commitErr) {
         if (isGitConflictError(commitErr) && attempt + 1 < maxCommitAttempts) {
@@ -1091,6 +1231,25 @@ export async function organizeInboxFile(params: {
 
     if (!commitRes) {
       throw new Error("Failed to commit organized inbox note after retries");
+    }
+
+    for (const [repoPath, updated] of syncedCrossFileUpdates.entries()) {
+      const page = buildWikiPageDoc({
+        path: repoPath,
+        relativePath: updated.rel,
+        markdown: updated.markdown,
+        updatedAt: nowIso,
+      });
+      await params.store.upsertWikiPage(page);
+      const nextTasks = isTaskSourceExcluded(updated.rel)
+        ? []
+        : extractTasksFromMarkdown({
+            markdown: updated.markdown,
+            sourcePath: repoPath,
+            sourceSlug: page.slug,
+            updatedAt: nowIso,
+          });
+      await params.store.replaceTasksForSource(repoPath, nextTasks);
     }
 
     let researchResult: ResearchRunResult | undefined;

@@ -3,6 +3,7 @@ import type {
   GardenerRunResponse,
   PlanRunResponse,
   ResearchRunResponse,
+  TaskReconcilerRunResponse,
   ToggleTaskResponse,
   VaultCommandRunResponse,
   WeeklyReviewRunResponse,
@@ -129,5 +130,16 @@ export async function toggleTaskStatus(params: {
   return apiFetch<ToggleTaskResponse>("/api/tasks/toggle", {
     method: "POST",
     body: JSON.stringify(params),
+  });
+}
+
+export async function triggerTaskReconciler(params?: {
+  skipLlm?: boolean;
+  skipGoogle?: boolean;
+  dryRun?: boolean;
+}): Promise<TaskReconcilerRunResponse> {
+  return apiFetch<TaskReconcilerRunResponse>("/api/agents/reconcile-tasks", {
+    method: "POST",
+    body: JSON.stringify(params ?? {}),
   });
 }

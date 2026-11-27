@@ -177,3 +177,31 @@ export interface ToggleTaskResponse {
   changed: boolean;
   commitSha?: string;
 }
+
+export type TaskClosureVia =
+  | "deterministic"
+  | "google-tasks"
+  | "llm-evidence"
+  | "organizer";
+
+export interface ClosedTaskRecord {
+  sourcePath: string;
+  text: string;
+  reason: string;
+  via: TaskClosureVia;
+}
+
+export interface TaskReconcilerRunResult {
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  closedTasks: ClosedTaskRecord[];
+  filesUpdated: string[];
+  commitSha?: string;
+  reason?: string;
+}
+
+export interface ReconcilerStateDoc {
+  lastRunAt: string;
+  lastHeadSha?: string;
+  lastClosedCount?: number;
+}

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -97,6 +98,25 @@ async function main() {
   const msgIdx = process.argv.indexOf("--message");
   if (msgIdx >= 0 && process.argv[msgIdx + 1]) {
     commitMessage = process.argv[msgIdx + 1];
+  } else {
+    try {
+      const subjectsRaw = execSync("git log -n 5 --pretty=format:%s", {
+        cwd: ROOT_DIR,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const subjects = subjectsRaw
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+      if (subjects.length > 0) {
+        const joined = `docs(vault): sync Foxie Notes | commits: ${subjects.join("; ")}`;
+        commitMessage = joined.length > 220 ? `${joined.slice(0, 217)}...` : joined;
+      }
+    } catch {
+      // ignore if git log is unavailable
+    }
   }
   const includeRootWiki = process.argv.includes("--include-root-wiki");
 

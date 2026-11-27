@@ -150,3 +150,20 @@ export interface ToggleTaskResponse {
   changed: boolean;
   commitSha?: string;
 }
+
+export interface ClosedTaskRecord {
+  sourcePath: string;
+  text: string;
+  reason: string;
+  via: "deterministic" | "google-tasks" | "llm-evidence" | "organizer";
+}
+
+export interface TaskReconcilerRunResponse {
+  ok: boolean;
+  status: "executed" | "skipped" | "error";
+  summary: string;
+  closedTasks: ClosedTaskRecord[];
+  filesUpdated: string[];
+  commitSha?: string;
+  reason?: string;
+}

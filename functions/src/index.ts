@@ -6,7 +6,9 @@ import { app } from "./app.js";
 import { createFirestoreVaultStore } from "./services/firestoreStore.js";
 import { runGardenerAgent } from "./services/gardenerAgent.js";
 import { createGitHubVaultClient } from "./services/github.js";
+import { createGoogleWorkspaceClient } from "./services/googleWorkspace.js";
 import { organizePendingInboxFiles } from "./services/inboxOrganizer.js";
+import { runTaskReconcilerAgent } from "./services/taskReconciler.js";
 import { runWeeklyReviewAgent } from "./services/weeklyReviewAgent.js";
 
 initializeApp();
@@ -113,5 +115,39 @@ export const weeklyReview = onSchedule(
     console.log(
       `[weeklyReview] status=${result.status} week=${result.weekKey} path=${result.reportPath} days=${result.journalDaysIncluded} openTasks=${result.openTasksCount}`,
     );
+  },
+);
+
+export const taskReconciler = onSchedule(
+  {
+    schedule: "every 60 minutes",
+    region: "europe-west1",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    secrets: [
+      githubToken,
+      geminiApiKey,
+      googleClientId,
+      googleClientSecret,
+      googleRefreshToken,
+    ],
+  },
+  async () => {
+    const vaultClient = createGitHubVaultClient();
+    const store = createFirestoreVaultStore();
+    const googleClient = createGoogleWorkspaceClient();
+    const result = await runTaskReconcilerAgent({
+      vaultClient,
+      store,
+      googleClient,
+      vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+      skipLlmIfUnchanged: true,
+    });
+    if (result.status !== "skipped" || result.closedTasks.length > 0) {
+      console.log(
+        `[taskReconciler] status=${result.status} closed=${result.closedTasks.length} files=${result.filesUpdated.length} reason=${result.reason ?? ""}`,
+      );
+    }
   },
 );

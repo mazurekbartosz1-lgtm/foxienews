@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T12:40:00Z
+updated_at: 2026-11-27T12:55:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -45,8 +45,8 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
      - **Kurator „Ogrodnik” (`gardenerAgent.ts`, `weeklyGardener` niedz. 04:00 `Europe/Warsaw` + `POST /api/agents/gardener`):** audytuje i naprawia `wiki/index.md` (brakujące/martwe wpisy), delikatnie pielęgnuje powiązania `[[wikilinks]]` bezpośrednio na `main` (z ochroną plików systemowych i `foxie-notes/**`) oraz posiada retry/fallback przy `503` Gemini. Zweryfikowano na żywo przez `POST /api/agents/gardener` (`skipLlm: true` -> `200 vault_already_clean`).
      - **Przegląd Tygodniowy (`weeklyReviewAgent.ts`, `weeklyReview` niedz. 19:00 `Europe/Warsaw` + `POST /api/agents/weekly-review`):** generuje `wiki/dziennik/tydzien-YYYY-Www.md` z dniówek, `wiki/log.md`, otwartych zadań i pomysłów (z 3-krotnym retry przy `503`/`429` Gemini; w trakcie testu na żywo upstream Gemini miał okresowy szczyt obciążenia `503`/timeout).
      - Skrypt `npm run vault:overview` zapewnia pełny przegląd zdalnego vaulta (`raw/inbox/`, `wiki/projekty/`, `wiki/pomysly/`, `wiki/obszary/` i integralność `wiki/index.md`).
-   - **Cykl życia zadań, `POST /api/tasks/toggle` i wykluczenie `research.md` (`wikiParser.ts` + `wikiSync.ts` + `researchAgent.ts`):** `syncGitHubPush` nie zasila już kolekcji `tasks` checkboxami z raportów `**/research.md`, `index.md` ani `log.md`, `researchAgent` formatuje `## Następne kroki` jako zwykłe punkty i automatycznie zamyka otwarte zadania `- [ ] ...research...` w notatce nadrzędnej, a `POST /api/tasks/toggle` pozwala odhaczać/otwierać zadania bezpośrednio w Markdownie na GitHubie i natychmiastowo w Firestore.
-   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `31/31` przypadkach (`tsc` + `node --test`).
+   - **Cykl życia zadań, `POST /api/tasks/toggle`, wykluczenie `research.md` oraz autonomiczny Agent Zamykacz Zadań (`taskReconciler.ts` + `inboxOrganizer.ts` + `googleWorkspace.ts`):** `syncGitHubPush` nie zasila już kolekcji `tasks` z `**/research.md`, `index.md` ani `log.md`; `POST /api/tasks/toggle` odhacza zadania z UI; dodatkowo wdrożono wielokanałowe automatyczne zamykanie zadań bez ingerencji użytkownika: (1) Organizator domyka zadania na podstawie nowych notatek głosowych/webowych (`completedTaskRefs`, także cross-file w jednym commicie), (2) webhook GitHub po `docs(vault):` z `npm run sync:vault` (zawierającego tematy commitów z `foxienews`) automatycznie uruchamia `runTaskReconcilerAgent`, (3) dwukierunkowy sync ukończonych zadań z Google Tasks (`listTasks` + `matchCompletedGoogleTasks`), (4) harmonogram `taskReconciler` (`every 60 minutes`) z regułami deterministycznymi, Google Tasks i odciskiem palca w `wiki_meta/reconciler_state`, oraz (5) `POST /api/agents/reconcile-tasks` i przycisk **Porządkuj zadania** w `AgentsActivityView.tsx`.
+   - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `36/36` przypadkach (`tsc` + `node --test`).
 
 4. **Aplikacja Webowa (`web/`, Etap 2B — gotowa na Vercel):**
    - React + Vite + Tailwind v4 w papierowej estetyce *yourmoments* (`#F7F5F0`, `Lora`, `JetBrains Mono`).

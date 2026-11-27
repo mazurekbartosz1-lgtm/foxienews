@@ -30,7 +30,7 @@ Run these steps **before** running `git commit`:
 4. **Stage, re-verify, commit, and sync private Obsidian repo**
    - Run `git add .` and inspect `git status --short` to confirm `vault/` updates are staged and zero secrets/build artifacts (`node_modules/`, `.pio/`, `config.h`, `.env`) are included.
    - Commit with a descriptive Conventional Commits message (`git commit -m "..."`).
-   - Run `npm run sync:vault` (`scripts/sync-obsidian-vault.mjs`, with `BypassSandbox: true` if network is sandboxed) so `vault/SCHEMA.md` and `vault/wiki/**` are synced in one atomic commit to the private Obsidian repository configured in `functions/.env` (preserves `raw/inbox/` and never prints tokens).
+   - Run `npm run sync:vault` (`scripts/sync-obsidian-vault.mjs`, with `BypassSandbox: true` if network is sandboxed) so `vault/SCHEMA.md` and `vault/wiki/**` are synced in one atomic commit to the private Obsidian repository configured in `functions/.env` (preserves `raw/inbox/`, includes recent commit subjects for automatic `taskReconciler` webhook cleanup, and never prints tokens).
    - Push the code repository only when requested (`git push origin main`).
 
 ## Procedure B: Resume in a New Context Window

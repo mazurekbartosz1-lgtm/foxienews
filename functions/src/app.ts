@@ -50,6 +50,10 @@ import {
   type GenerateWeeklyReviewFn,
 } from "./services/weeklyReviewAgent.js";
 import {
+  runTaskReconcilerAgent,
+  type MatchCompletedTasksFn,
+} from "./services/taskReconciler.js";
+import {
   buildWikiPageDoc,
   extractTasksFromMarkdown,
   normalizeSlug,
@@ -69,6 +73,7 @@ import type {
   CaptureResponse,
   CaptureSource,
   OrganizeInboxResult,
+  TaskReconcilerRunResult,
   ToggleTaskResponse,
 } from "./types/api.js";
 
@@ -107,7 +112,39 @@ export interface AppDeps {
   buildVaultCommandPlan?: BuildVaultCommandPlanFn;
   buildGardenerPlan?: BuildGardenerPlanFn;
   generateWeeklyReview?: GenerateWeeklyReviewFn;
+  matchCompletedTasks?: MatchCompletedTasksFn;
+  enableTaskReconciler?: boolean;
   now?: () => Date;
+}
+
+function extractVaultSyncEvidenceFromPush(
+  payload: GitHubPushPayload,
+  vaultPrefix = "",
+): string | null {
+  const commits = payload.commits ?? [];
+  const hasReconcilerCommit = commits.some((c) =>
+    (c.message ?? "").trim().toLowerCase().startsWith("agent(reconciler):"),
+  );
+  if (hasReconcilerCommit) return null;
+
+  const syncCommits = commits.filter((c) => {
+    const msg = (c.message ?? "").trim().toLowerCase();
+    if (!msg.startsWith("docs(vault):")) return false;
+    const touched = [...(c.added ?? []), ...(c.modified ?? [])];
+    return touched.some((p) => {
+      const rel = extractVaultRelativePath(p, vaultPrefix)?.toLowerCase() ?? "";
+      return (
+        rel === "wiki/projekty/foxie-notes/status.md" ||
+        rel.startsWith("wiki/projekty/foxie-notes/zadania/")
+      );
+    });
+  });
+
+  if (syncCommits.length === 0) return null;
+  return syncCommits
+    .map((c) => (c.message ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
 }
 
 function normalizeAudioBase64(raw: string): string {
@@ -510,10 +547,49 @@ export function createApp(deps: AppDeps = {}): express.Express {
         }
       }
 
+      let reconciled: TaskReconcilerRunResult | undefined;
+      const syncEvidence = extractVaultSyncEvidenceFromPush(
+        payload,
+        process.env.GITHUB_VAULT_PREFIX,
+      );
+      const canRunReconciler =
+        deps.enableTaskReconciler !== false &&
+        (Boolean(deps.vaultClient) ||
+          (Boolean(process.env.GITHUB_TOKEN?.trim()) &&
+            Boolean(process.env.GEMINI_API_KEY?.trim())));
+
+      if (syncEvidence && canRunReconciler) {
+        try {
+          const client = deps.vaultClient ?? createGitHubVaultClient();
+          const gClient = deps.googleClient ?? createGoogleWorkspaceClient();
+          reconciled = await runTaskReconcilerAgent({
+            vaultClient: client,
+            store: vaultStore,
+            googleClient: gClient,
+            matchCompletedTasks: deps.matchCompletedTasks,
+            evidence: syncEvidence,
+            vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+            now: getNow,
+          });
+        } catch (recErr) {
+          const recMessage =
+            recErr instanceof Error ? recErr.message : "Failed to reconcile tasks on push";
+          console.error("[/api/webhook/github] Reconciler error:", recMessage);
+          reconciled = {
+            status: "error",
+            summary: recMessage,
+            closedTasks: [],
+            filesUpdated: [],
+            reason: recMessage,
+          };
+        }
+      }
+
       res.json({
         ok: true,
         ...result,
         ...(organized.length > 0 ? { organized } : {}),
+        ...(reconciled ? { reconciled } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sync GitHub push";
@@ -849,6 +925,54 @@ export function createApp(deps: AppDeps = {}): express.Express {
       const message =
         err instanceof Error ? err.message : "Failed to run weekly review agent";
       console.error("[/api/agents/weekly-review] Error:", message);
+      const status = message.startsWith("Missing ") ? 500 : 502;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Reconciler Agent: automatically close completed tasks based on commits, logs & Google Tasks
+  app.post("/api/agents/reconcile-tasks", requireAuth, async (req, res) => {
+    const body = (req.body ?? {}) as {
+      evidence?: unknown;
+      skipLlm?: unknown;
+      skipGoogle?: unknown;
+      dryRun?: unknown;
+    };
+
+    const evidence = typeof body.evidence === "string" ? body.evidence.trim() : undefined;
+    const skipLlm = body.skipLlm === true;
+    const skipGoogle = body.skipGoogle === true;
+    const dryRun = body.dryRun === true;
+
+    try {
+      const client = deps.vaultClient ?? createGitHubVaultClient();
+      const gClient = deps.googleClient ?? createGoogleWorkspaceClient();
+      const result = await runTaskReconcilerAgent({
+        vaultClient: client,
+        store: vaultStore,
+        googleClient: gClient,
+        matchCompletedTasks: deps.matchCompletedTasks,
+        evidence,
+        skipLlm,
+        skipGoogle,
+        dryRun,
+        vaultPrefix: process.env.GITHUB_VAULT_PREFIX,
+        now: getNow,
+      });
+
+      if (result.status === "error") {
+        res.status(502).json({ ok: false, ...result });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        ...result,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run task reconciler agent";
+      console.error("[/api/agents/reconcile-tasks] Error:", message);
       const status = message.startsWith("Missing ") ? 500 : 502;
       res.status(status).json({ error: message });
     }

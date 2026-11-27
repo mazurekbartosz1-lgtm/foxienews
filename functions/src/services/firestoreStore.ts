@@ -1,11 +1,18 @@
 import crypto from "node:crypto";
 import { getFirestore } from "firebase-admin/firestore";
-import type { InboxJobDoc, TaskDoc, WikiIndexDoc, WikiPageDoc } from "../types/api.js";
+import type {
+  InboxJobDoc,
+  ReconcilerStateDoc,
+  TaskDoc,
+  WikiIndexDoc,
+  WikiPageDoc,
+} from "../types/api.js";
 import { normalizeSlug, slugToDocId } from "./wikiParser.js";
 
 const COLLECTION_WIKI_PAGES = "wiki_pages";
 const COLLECTION_WIKI_META = "wiki_meta";
 const DOC_WIKI_INDEX = "index";
+const DOC_RECONCILER_STATE = "reconciler_state";
 const COLLECTION_TASKS = "tasks";
 const COLLECTION_INBOX_JOBS = "inbox_jobs";
 const FIRESTORE_BATCH_LIMIT = 450;
@@ -25,6 +32,9 @@ export interface VaultStore {
   saveWikiIndex(index: WikiIndexDoc): Promise<void>;
   replaceTasksForSource(sourcePath: string, tasks: TaskDoc[]): Promise<void>;
   deleteTasksForSource(sourcePath: string): Promise<void>;
+  listOpenTasks(): Promise<TaskDoc[]>;
+  getReconcilerState(): Promise<ReconcilerStateDoc | null>;
+  saveReconcilerState(state: ReconcilerStateDoc): Promise<void>;
   getInboxJob(inboxPath: string): Promise<InboxJobDoc | null>;
   claimInboxJob(params: {
     inboxPath: string;
@@ -136,6 +146,30 @@ export function createFirestoreVaultStore(): VaultStore {
       await commitBatchedOps(ops);
     },
 
+    async listOpenTasks(): Promise<TaskDoc[]> {
+      const snap = await db()
+        .collection(COLLECTION_TASKS)
+        .where("completed", "==", false)
+        .get();
+      return snap.docs.map((doc) => doc.data() as TaskDoc);
+    },
+
+    async getReconcilerState(): Promise<ReconcilerStateDoc | null> {
+      const snap = await db()
+        .collection(COLLECTION_WIKI_META)
+        .doc(DOC_RECONCILER_STATE)
+        .get();
+      if (!snap.exists) return null;
+      return snap.data() as ReconcilerStateDoc;
+    },
+
+    async saveReconcilerState(state: ReconcilerStateDoc): Promise<void> {
+      await db()
+        .collection(COLLECTION_WIKI_META)
+        .doc(DOC_RECONCILER_STATE)
+        .set(stripUndefined(state));
+    },
+
     async getInboxJob(inboxPath: string): Promise<InboxJobDoc | null> {
       const id = inboxPathToJobId(inboxPath);
       const snap = await db().collection(COLLECTION_INBOX_JOBS).doc(id).get();
@@ -210,6 +244,7 @@ export function createInMemoryVaultStore(): VaultStore & {
   const tasks = new Map<string, TaskDoc>();
   const inboxJobs = new Map<string, InboxJobDoc>();
   let indexDoc: WikiIndexDoc | null = null;
+  let reconcilerState: ReconcilerStateDoc | null = null;
 
   return {
     async upsertWikiPage(page: WikiPageDoc): Promise<void> {
@@ -254,6 +289,20 @@ export function createInMemoryVaultStore(): VaultStore & {
           tasks.delete(id);
         }
       }
+    },
+
+    async listOpenTasks(): Promise<TaskDoc[]> {
+      return Array.from(tasks.values())
+        .filter((t) => !t.completed)
+        .map((t) => structuredClone(t));
+    },
+
+    async getReconcilerState(): Promise<ReconcilerStateDoc | null> {
+      return reconcilerState ? structuredClone(reconcilerState) : null;
+    },
+
+    async saveReconcilerState(state: ReconcilerStateDoc): Promise<void> {
+      reconcilerState = structuredClone(state);
     },
 
     async getInboxJob(inboxPath: string): Promise<InboxJobDoc | null> {

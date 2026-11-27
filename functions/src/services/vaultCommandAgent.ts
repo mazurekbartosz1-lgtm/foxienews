@@ -379,6 +379,7 @@ export async function buildVaultCommandPlanWithGemini(
     "4. Jeśli modyfikujesz istniejący plik (np. dziennik `wiki/dziennik/...`), zachowaj pozostałe sekcje tego pliku nienaruszone (w tym ewentualną sekcję `## Synchronizacja Google`) — możesz zostawić w dzienniku zwięzły odnośnik `[[obszary/...]]` albo usunąć zduplikowaną sekcję zgodnie z prośbą użytkownika.",
     "5. Każdy wpis w `writes` musi zawierać kompletny dokument Markdown z YAML frontmatterem (`title`, `type`, `status`, `tags`, `created_at`, `updated_at`, `source`).",
     "6. `deletes` używaj tylko wtedy, gdy stary plik wiki jest całkowicie pusty po przeniesieniu lub użytkownik wyraźnie prosił o usunięcie/przeniesienie.",
+    "7. Jeśli polecenie użytkownika stwierdza, że zadanie lub temat są już ukończone albo załatwione, zmień pasujące checkboxy `- [ ]` na `- [x]` zamiast zostawiać je otwarte.",
     "",
     "Zwróć WYŁĄCZNIE poprawny obiekt JSON:",
     "{",

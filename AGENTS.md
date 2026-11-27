@@ -14,7 +14,7 @@ Before running any `git commit`, you MUST follow `.agents/skills/obsidian-commit
 - Update `vault/wiki/projekty/foxie-notes/status.md` (`updated_at`, working status, decisions/pitfalls, next step).
 - Update completed checkboxes in `vault/wiki/projekty/foxie-notes/zadania/*.md`.
 - Add a concise entry to `vault/wiki/log.md`.
-- After updating `vault/wiki/`, run `npm run sync:vault` (`scripts/sync-obsidian-vault.mjs`) to sync `vault/SCHEMA.md` and `vault/wiki/**` to the private Obsidian repository configured in `functions/.env` (without modifying `raw/inbox/`).
+- After updating `vault/wiki/`, run `npm run sync:vault` (`scripts/sync-obsidian-vault.mjs`) to sync `vault/SCHEMA.md` and `vault/wiki/**` to the private Obsidian repository configured in `functions/.env` (without modifying `raw/inbox/`). The sync commit automatically includes recent `foxienews` commit subjects so the cloud `taskReconciler` webhook hook can auto-close any matching stale `- [ ]` tasks in `obsydianandwiki`.
 - Stage all updated `vault/` notes together in the same commit as the code changes.
 
 ## 3. Secret Hygiene (Strict)

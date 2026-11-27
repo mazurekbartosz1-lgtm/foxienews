@@ -1,7 +1,7 @@
 ---
 title: Zadania — Etap 3 (UX urządzenia, Stabilność, Cykliczni Agenci)
 slug: projekty/foxie-notes/zadania/etap-3-ux-i-stabilnosc
-updated_at: 2026-11-27T12:40:00Z
+updated_at: 2026-11-27T12:55:00Z
 tags: [zadania, etap-3, ux, firmware, agenci, foxie-notes]
 ---
 
@@ -33,6 +33,7 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 ## Kolejne etapy (Następny krok)
 - [x] **Szybkie wybudzanie (`firmware/`):** 3 czytelne stany (`Uśpiony -> Wybudzanie z loaderem -> Nagrywanie/Gotowy`), natychmiastowy partial refresh przez `nextPageToPrevious()` (~`439 ms` bez 3× mrugania), bezpośrednie przejście do nagrywania po wybudzeniu przyciskiem `BOOT` oraz nieblokujące Wi-Fi w tle (`startWifiConnectAsync` / `pollWifiConnectAsync`), zweryfikowane na `COM5` #firmware #ux
 - [x] **Cykl życia zadań i spokojniejszy UX aplikacji webowej (`functions/` + `web/`):** wykluczono sugestie z `**/research.md` z głównej listy zadań (`wikiSync.ts`, `researchAgent.ts`), dodano automatyczne odhaczanie zadania „Zrobić research...” w notatce źródłowej, endpoint `POST /api/tasks/toggle` (`31/31` testów) oraz przeprojektowano `TasksView.tsx` (zwijany Quick Capture, filtry statusu/kategorii/tagów, grupowanie po tematach, klikalne checkboxy) i `WikiView.tsx` (filtry PARA, tagi, zagnieżdżone raporty `↳ Raport Research`, zwijane sekcje) #webapp #ux #backend
+- [x] **Autonomiczny Agent Zamykacz Zadań (`taskReconciler` + hooki po akcjach i commitach):** automatyczne zamykanie zadań przez Organizatora (`completedTaskRefs` z głosu/tekstu, także cross-file), po commitach `docs(vault):` w webhooku GitHub (`sync-obsidian-vault.mjs` z tematami commitów), przez dwukierunkowy sync ukończonych zadań z Google Tasks (`googleWorkspace.listTasks`), cykliczny harmonogram `taskReconciler` (`every 60 minutes` + `wiki_meta/reconciler_state`), endpoint `POST /api/agents/reconcile-tasks` oraz przycisk **Porządkuj zadania** w `AgentsActivityView.tsx` (`36/36` testów) #agenci #backend #ux
 - [ ] **Sygnał dźwiękowy `beep` ES8311 (`firmware/`):** odtworzenie krótkiego sygnału dźwiękowego przez kodek ES8311 + wzmacniacz NS4150B (`DOUT=45`, `PA_CTRL=46`) po zakończeniu nagrania #firmware #ux
 - [x] **Cykliczni agenci `onSchedule` (`functions/` + `web/`):** okresowy Kurator „Ogrodnik” (`weeklyGardener`, niedziela 04:00 `Europe/Warsaw` + `POST /api/agents/gardener`) oraz Przegląd Tygodniowy (`weeklyReview`, niedziela 19:00 `Europe/Warsaw` -> `wiki/dziennik/tydzien-YYYY-Www.md` + `POST /api/agents/weekly-review`) wraz z przyciskami ręcznego wywołania w `AgentsActivityView.tsx` (`29/29` testy + wdrożono w Firebase) #agenci #backend #webapp
 - [ ] **Pomysł `[[pomysly/agent-ai-dla-developera]]`:** zaprojektować architekturę agenta deweloperskiego z podziałem na zadania autonomiczne oraz wymagające akceptacji (approval HITL) #pomysl #agenci

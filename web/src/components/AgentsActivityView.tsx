@@ -10,6 +10,7 @@ import {
   FlaskConical,
   FolderTree,
   GitPullRequest,
+  ListChecks,
   Loader2,
   Play,
   Sparkles,
@@ -18,6 +19,7 @@ import {
 import {
   triggerGardener,
   triggerOrganizeInbox,
+  triggerTaskReconciler,
   triggerVaultCommand,
   triggerWeeklyReview,
 } from "../lib/api";
@@ -25,6 +27,7 @@ import { db, normalizeSlug } from "../lib/firebase";
 import type {
   GardenerRunResponse,
   InboxJobDoc,
+  TaskReconcilerRunResponse,
   VaultCommandRunResponse,
   WeeklyReviewRunResponse,
 } from "../types";
@@ -48,6 +51,9 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
   const [gardenerResult, setGardenerResult] = useState<GardenerRunResponse | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewResult, setReviewResult] = useState<WeeklyReviewRunResponse | null>(null);
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileResult, setReconcileResult] =
+    useState<TaskReconcilerRunResponse | null>(null);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -135,12 +141,28 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
     }
   };
 
+  const handleRunReconciler = async () => {
+    setReconcileBusy(true);
+    setBatchMessage(null);
+    setReconcileResult(null);
+    try {
+      const res = await triggerTaskReconciler();
+      setReconcileResult(res);
+    } catch (err) {
+      setBatchMessage(
+        err instanceof Error ? err.message : "Nie udało się uruchomić porządkowania zadań.",
+      );
+    } finally {
+      setReconcileBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-3 rounded-2xl border border-[#E4DFD4] bg-[#FCFBF8] p-5 sm:flex-row sm:items-center">
         <div>
           <p className="font-mono-meta text-[11px] uppercase tracking-[0.16em] text-[#7A756D]">
-            Chmurowi agenci · Organizator · Researcher · Kurator · Planowanie · Ogrodnik
+            Chmurowi agenci · Organizator · Researcher · Kurator · Planowanie · Ogrodnik · Reconciler
           </p>
           <h2 className="mt-1 text-lg font-medium text-[#1C1A18]">
             Dziennik przetwarzania `raw/inbox/`
@@ -160,6 +182,20 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
               <Play className="h-3.5 w-3.5" />
             )}
             Przetwórz zaległy inbox
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRunReconciler}
+            disabled={reconcileBusy}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#D7CEBF] bg-[#FAF9F5] px-3.5 py-2 text-xs font-medium text-[#2A2622] transition hover:border-[#2F5D50] hover:text-[#2F5D50] disabled:opacity-50"
+          >
+            {reconcileBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ListChecks className="h-3.5 w-3.5" />
+            )}
+            Porządkuj zadania
           </button>
 
           <button
@@ -195,6 +231,44 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
       {batchMessage && (
         <div className="rounded-xl border border-[#DED8CB] bg-[#F2EFE8] px-4 py-2.5 text-xs text-[#2A2622]">
           {batchMessage}
+        </div>
+      )}
+
+      {reconcileResult && (
+        <div className="rounded-xl border border-[#C6D8CC] bg-[#F1F7F3] px-4 py-3 text-xs text-[#244B3C]">
+          <p className="font-medium">
+            {reconcileResult.closedTasks.length > 0
+              ? `Zamknięto automatycznie ${reconcileResult.closedTasks.length} zadań: ${reconcileResult.summary}`
+              : "Brak zadań do automatycznego zamknięcia — wszystkie otwarte pozycje są aktualne."}
+          </p>
+          {reconcileResult.closedTasks.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {reconcileResult.closedTasks.map((item, idx) => {
+                const slug = normalizeSlug(item.sourcePath.replace(/^wiki\//i, ""));
+                return (
+                  <li
+                    key={`${item.sourcePath}-${idx}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#B5CEC0]/70 bg-[#FCFBF8] px-3 py-1.5"
+                  >
+                    <div>
+                      <span className="font-medium text-[#1C1A18]">{item.text}</span>
+                      <span className="ml-2 text-[11px] text-[#5C7268]">
+                        ({item.reason})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenWikiSlug(slug)}
+                      className="font-mono-meta inline-flex items-center gap-1 text-[11px] text-[#244B3C] hover:underline"
+                    >
+                      [[{slug}]]
+                      <ExternalLink className="h-3 w-3" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
 

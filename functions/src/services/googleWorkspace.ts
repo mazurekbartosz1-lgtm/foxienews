@@ -3,9 +3,25 @@ export interface GoogleTaskListSummary {
   title: string;
 }
 
+export interface GoogleTaskItem {
+  id: string;
+  title: string;
+  status: "needsAction" | "completed";
+  completed?: string;
+  notes?: string;
+  listId: string;
+  listTitle: string;
+}
+
 export interface GoogleWorkspaceClient {
   isConfigured(): boolean;
   listTaskLists(): Promise<GoogleTaskListSummary[]>;
+  listTasks?(params: {
+    listId: string;
+    listTitle?: string;
+    showCompleted?: boolean;
+    showHidden?: boolean;
+  }): Promise<GoogleTaskItem[]>;
   ensureTaskList(listName: string): Promise<{
     id: string;
     title: string;
@@ -131,6 +147,48 @@ export function createGoogleWorkspaceClient(): GoogleWorkspaceClient {
 
     async listTaskLists(): Promise<GoogleTaskListSummary[]> {
       return listTaskListsInternal();
+    },
+
+    async listTasks(params: {
+      listId: string;
+      listTitle?: string;
+      showCompleted?: boolean;
+      showHidden?: boolean;
+    }): Promise<GoogleTaskItem[]> {
+      const listId = params.listId || "@default";
+      const query = new URLSearchParams({
+        maxResults: "100",
+        showCompleted: params.showCompleted === false ? "false" : "true",
+        showHidden: params.showHidden === false ? "false" : "true",
+      });
+      const data = await authedJsonFetch<{
+        items?: Array<{
+          id?: string;
+          title?: string;
+          status?: string;
+          completed?: string;
+          notes?: string;
+        }>;
+      }>(`${TASKS_BASE_URL}/lists/${encodeURIComponent(listId)}/tasks?${query.toString()}`);
+
+      const resolvedTitle =
+        params.listTitle ??
+        cachedLists?.find((l) => l.id === listId)?.title ??
+        listId;
+
+      return (data.items ?? [])
+        .filter((item): item is { id: string; title: string; status?: string; completed?: string; notes?: string } =>
+          Boolean(item.id && item.title),
+        )
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status === "completed" ? "completed" : "needsAction",
+          ...(item.completed ? { completed: item.completed } : {}),
+          ...(item.notes ? { notes: item.notes } : {}),
+          listId,
+          listTitle: resolvedTitle,
+        }));
     },
 
     async ensureTaskList(listName: string): Promise<{
