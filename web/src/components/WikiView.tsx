@@ -9,7 +9,7 @@ import {
   Search,
 } from "lucide-react";
 import { triggerPlanForPage, triggerResearchForPage } from "../lib/api";
-import { db, slugToDocId } from "../lib/firebase";
+import { db, normalizeSlug, slugToDocId } from "../lib/firebase";
 import { MarkdownContent } from "../lib/markdown";
 import type { WikiIndexDoc, WikiIndexEntry, WikiPageDoc } from "../types";
 
@@ -61,6 +61,7 @@ export const WikiView: React.FC<WikiViewProps> = ({
   const [actionMessage, setActionMessage] = useState<{
     text: string;
     prUrl?: string;
+    openSlug?: string;
     isError?: boolean;
   } | null>(null);
 
@@ -159,12 +160,16 @@ export const WikiView: React.FC<WikiViewProps> = ({
     setActionBusy("research");
     setActionMessage(null);
     try {
-      const res = await triggerResearchForPage(pageDoc.path);
+      const res = await triggerResearchForPage(pageDoc.path, true);
+      const reportSlug = res.reportPath
+        ? normalizeSlug(res.reportPath.replace(/^wiki\//i, ""))
+        : undefined;
       setActionMessage({
         text:
           res.status === "created"
-            ? `Otwarto Pull Request #${res.prNumber} w obsydianandwiki.`
-            : `Otwarty PR już istnieje (#${res.prNumber}).`,
+            ? "Zapisano raport Research bezpośrednio w Wiki."
+            : "Raport Research już istnieje w Wiki.",
+        openSlug: reportSlug,
         prUrl: res.prUrl,
       });
     } catch (err) {
@@ -311,7 +316,7 @@ export const WikiView: React.FC<WikiViewProps> = ({
                   ) : (
                     <FlaskConical className="h-3.5 w-3.5 text-[#C66A3D]" />
                   )}
-                  Research PR
+                  Zrób Research
                 </button>
 
                 <button
@@ -340,6 +345,15 @@ export const WikiView: React.FC<WikiViewProps> = ({
               }`}
             >
               <span>{actionMessage.text}</span>
+              {actionMessage.openSlug && (
+                <button
+                  type="button"
+                  onClick={() => navigateToSlug(actionMessage.openSlug!)}
+                  className="font-mono-meta ml-2 font-medium underline"
+                >
+                  Otwórz [[{actionMessage.openSlug}]]
+                </button>
+              )}
               {actionMessage.prUrl && (
                 <a
                   href={actionMessage.prUrl}

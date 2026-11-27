@@ -1,7 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import type { ResearchRunResult } from "../types/api.js";
-import type { GitHubVaultClient } from "./github.js";
+import type { AtomicFileChange, GitHubVaultClient } from "./github.js";
+import {
+  type IndexSectionName,
+  updateWikiIndexMarkdown,
+} from "./inboxOrganizer.js";
 import { slugifyPolish } from "./markdown.js";
+import { isProtectedVaultPath } from "./vaultCommandAgent.js";
 import { extractVaultRelativePath } from "./wikiSync.js";
 
 export interface ResearchSource {
@@ -35,8 +40,11 @@ function escapeYaml(value: string): string {
   return JSON.stringify(value.replace(/\r?\n/g, " ").trim());
 }
 
-function normalizeTagsList(extraTags: readonly string[] = []): string[] {
-  const out: string[] = ["research", "pomysl"];
+function normalizeTagsList(
+  categoryTag: string,
+  extraTags: readonly string[] = [],
+): string[] {
+  const out: string[] = ["research", categoryTag];
   const seen = new Set<string>(out);
   for (const raw of extraTags) {
     const cleaned = slugifyPolish(raw.replace(/^#/, "").trim());
@@ -48,35 +56,91 @@ function normalizeTagsList(extraTags: readonly string[] = []): string[] {
   return out;
 }
 
+function sectionInfoFromFolder(folder: string): {
+  indexSection: IndexSectionName;
+  categoryTag: string;
+} {
+  switch (folder.toLowerCase()) {
+    case "projekty":
+      return { indexSection: "Projekty", categoryTag: "projekt" };
+    case "obszary":
+      return { indexSection: "Obszary", categoryTag: "obszar" };
+    case "zasoby":
+      return { indexSection: "Zasoby", categoryTag: "zasob" };
+    case "pomysly":
+    default:
+      return { indexSection: "Pomysły", categoryTag: "pomysl" };
+  }
+}
+
 export function buildResearchPaths(params: {
   topicTitle: string;
   targetWikiPath?: string;
 }): {
   topicSlug: string;
   reportRelativePath: string;
+  reportSlug: string;
+  indexSection: IndexSectionName;
+  categoryTag: string;
   branchName: string;
 } {
-  let rawSlug = "";
+  const fallbackTopicSlug =
+    slugifyPolish(params.topicTitle)
+      .slice(0, 42)
+      .replace(/-+$/g, "") || "pomysl";
+
   if (params.targetWikiPath) {
     const cleanTarget = params.targetWikiPath
       .trim()
       .replace(/\\/g, "/")
       .replace(/^\/+/, "")
       .replace(/^vault\//i, "");
-    const match = cleanTarget.match(/^wiki\/pomysly\/([^/]+?)(?:\/index)?\.md$/i);
-    if (match) {
-      rawSlug = match[1];
+
+    if (!isProtectedVaultPath(cleanTarget)) {
+      const match = cleanTarget.match(
+        /^wiki\/(projekty|obszary|pomysly|zasoby)\/(.+?)(?:\/(index|research))?\.md$/i,
+      );
+      if (match) {
+        const folder = match[1].toLowerCase();
+        const rawSubpath = match[2];
+        const cleanSegments = rawSubpath
+          .split("/")
+          .map((seg) => slugifyPolish(seg))
+          .filter(Boolean);
+
+        const isProtectedSub =
+          folder === "projekty" && cleanSegments[0] === "foxie-notes";
+
+        if (cleanSegments.length > 0 && !isProtectedSub) {
+          const { indexSection, categoryTag } = sectionInfoFromFolder(folder);
+          const subPath = cleanSegments.join("/");
+          const reportRelativePath = `wiki/${folder}/${subPath}/research.md`;
+          const topicSlug =
+            cleanSegments[cleanSegments.length - 1]
+              .slice(0, 42)
+              .replace(/-+$/g, "") || fallbackTopicSlug;
+
+          return {
+            topicSlug,
+            reportRelativePath,
+            reportSlug: reportRelativePath.replace(/^wiki\//i, "").replace(/\.md$/i, ""),
+            indexSection,
+            categoryTag,
+            branchName: "main",
+          };
+        }
+      }
     }
   }
 
-  const topicSlug = slugifyPolish(rawSlug || params.topicTitle)
-    .slice(0, 42)
-    .replace(/-+$/g, "") || "pomysl";
-
+  const reportRelativePath = `wiki/pomysly/${fallbackTopicSlug}/research.md`;
   return {
-    topicSlug,
-    reportRelativePath: `wiki/pomysly/${topicSlug}/research.md`,
-    branchName: `agent/research-${topicSlug}`,
+    topicSlug: fallbackTopicSlug,
+    reportRelativePath,
+    reportSlug: `pomysly/${fallbackTopicSlug}/research`,
+    indexSection: "Pomysły",
+    categoryTag: "pomysl",
+    branchName: "main",
   };
 }
 
@@ -246,6 +310,8 @@ Użyj dokładnie poniższych sekcji ## w tej kolejności:
 export function renderResearchReportMarkdown(params: {
   topicTitle: string;
   topicSlug: string;
+  reportSlug?: string;
+  categoryTag?: string;
   updatedAtIso: string;
   extraTags?: readonly string[];
   generated: GeneratedResearchReport;
@@ -253,9 +319,10 @@ export function renderResearchReportMarkdown(params: {
   targetWikiPath?: string;
   branchName: string;
 }): string {
-  const tags = normalizeTagsList(params.extraTags);
+  const categoryTag = params.categoryTag ?? "pomysl";
+  const tags = normalizeTagsList(categoryTag, params.extraTags);
   const title = `Research: ${params.topicTitle}`;
-  const slug = `pomysly/${params.topicSlug}/research`;
+  const slug = params.reportSlug ?? `pomysly/${params.topicSlug}/research`;
   const cleanBody = stripLeadingFrontmatterAndH1(params.generated.reportMarkdown);
 
   const relatedSlug = params.targetWikiPath
@@ -281,7 +348,7 @@ export function renderResearchReportMarkdown(params: {
     "",
   ];
 
-  if (relatedSlug) {
+  if (relatedSlug && relatedSlug !== slug) {
     lines.push(`Powiązane: [[${relatedSlug}]]`, "");
   }
 
@@ -305,7 +372,12 @@ export function renderResearchReportMarkdown(params: {
   if (params.sourcePath) {
     lines.push(`- Notatka źródłowa: \`${params.sourcePath}\``);
   }
-  lines.push(`- Gałąź PR: \`${params.branchName}\``, "");
+  lines.push(
+    params.branchName === "main"
+      ? "- Publikacja: bezpośrednio w vault (`main`)"
+      : `- Gałąź PR: \`${params.branchName}\``,
+    "",
+  );
 
   return lines.join("\n");
 }
@@ -355,6 +427,82 @@ function formatBranchSuffix(date: Date): string {
   return `${iso.slice(0, 10).replace(/-/g, "")}-${iso.slice(11, 16).replace(":", "")}`;
 }
 
+function prependResearchLogMarkdown(params: {
+  existingLogMarkdown: string | null;
+  dateStr: string;
+  updatedAtIso: string;
+  topicTitle: string;
+  reportSlug: string;
+}): string {
+  const base = (
+    params.existingLogMarkdown ??
+    `---
+title: Log zmian
+slug: log
+updated_at: ${params.updatedAtIso}
+tags: [log]
+---
+
+# Log zmian
+`
+  ).replace(/\r\n/g, "\n");
+
+  const withTimestamp = base.replace(
+    /^updated_at:\s*.*$/m,
+    `updated_at: ${params.updatedAtIso}`,
+  );
+  const line = `- **Agent Researcher (\`research\`):** Opublikowano raport [[${params.reportSlug}|Research: ${params.topicTitle}]]`;
+  const dayHeading = `## ${params.dateStr}`;
+
+  if (withTimestamp.includes(dayHeading)) {
+    const idx = withTimestamp.indexOf(dayHeading) + dayHeading.length;
+    const before = withTimestamp.slice(0, idx);
+    const after = withTimestamp.slice(idx);
+    return `${before}\n${line}${after.startsWith("\n") ? after : `\n${after}`}`;
+  }
+
+  const h1Match = withTimestamp.match(/^#\s+.+\n*/m);
+  if (h1Match && h1Match.index !== undefined) {
+    const insertAt = h1Match.index + h1Match[0].length;
+    const before = withTimestamp.slice(0, insertAt).trimEnd();
+    const after = withTimestamp.slice(insertAt).trimStart();
+    return `${before}\n\n${dayHeading}\n${line}${after ? `\n\n${after}` : "\n"}`;
+  }
+
+  return `${withTimestamp.trimEnd()}\n\n${dayHeading}\n${line}\n`;
+}
+
+function appendResearchLinkToParentPage(
+  parentMarkdown: string,
+  reportSlug: string,
+  topicTitle: string,
+  updatedAtIso: string,
+): string | null {
+  const normalized = parentMarkdown.replace(/\r\n/g, "\n");
+  if (
+    normalized.includes(`[[${reportSlug}|`) ||
+    normalized.includes(`[[${reportSlug}]]`)
+  ) {
+    return null;
+  }
+
+  const linkLine = `- [[${reportSlug}|Research: ${topicTitle}]]`;
+  let updated = normalized;
+  if (/^updated_at:/m.test(updated)) {
+    updated = updated.replace(/^updated_at:.*$/m, `updated_at: ${updatedAtIso}`);
+  }
+
+  const heading = "## Powiązany research";
+  if (updated.includes(heading)) {
+    const idx = updated.indexOf(heading) + heading.length;
+    const before = updated.slice(0, idx);
+    const after = updated.slice(idx);
+    return `${before}\n${linkLine}${after.startsWith("\n") ? after : `\n${after}`}`;
+  }
+
+  return `${updated.trimEnd()}\n\n${heading}\n${linkLine}\n`;
+}
+
 export async function runResearchAgent(params: {
   topicTitle: string;
   noteMarkdown: string;
@@ -373,24 +521,33 @@ export async function runResearchAgent(params: {
   const noteDate = updatedAtIso.slice(0, 10);
   const generateReport = params.generateReport ?? generateResearchReportWithGemini;
 
-  const { topicSlug, reportRelativePath, branchName } = buildResearchPaths({
+  const normalizedTarget = params.targetWikiPath
+    ? extractVaultRelativePath(params.targetWikiPath, params.vaultPrefix) ??
+      params.targetWikiPath.trim().replace(/\\/g, "/").replace(/^vault\//i, "")
+    : undefined;
+
+  const {
+    topicSlug,
+    reportRelativePath,
+    reportSlug,
+    indexSection,
+    categoryTag,
+  } = buildResearchPaths({
     topicTitle: params.topicTitle,
-    targetWikiPath: params.targetWikiPath
-      ? extractVaultRelativePath(params.targetWikiPath, params.vaultPrefix) ?? params.targetWikiPath
-      : undefined,
+    targetWikiPath: normalizedTarget,
   });
 
+  const reportRepoPath = joinRepoPath(params.vaultPrefix, reportRelativePath);
+
   if (!params.force) {
-    const existingPr = await params.vaultClient.findOpenPullRequest(branchName);
-    if (existingPr) {
+    const existingReport = await params.vaultClient.fetchFile(reportRepoPath);
+    if (existingReport !== null) {
       return {
         status: "skipped",
         topicSlug,
-        branch: existingPr.branch,
-        reportPath: joinRepoPath(params.vaultPrefix, reportRelativePath),
-        prNumber: existingPr.number,
-        prUrl: existingPr.url,
-        reason: "open_pr_already_exists",
+        branch: "main",
+        reportPath: reportRepoPath,
+        reason: "research_already_exists",
       };
     }
   }
@@ -398,63 +555,88 @@ export async function runResearchAgent(params: {
   const generated = await generateReport({
     topicTitle: params.topicTitle,
     noteMarkdown: params.noteMarkdown,
-    targetWikiPath: params.targetWikiPath,
+    targetWikiPath: normalizedTarget,
     noteDate,
   });
-
-  const reportRepoPath = joinRepoPath(params.vaultPrefix, reportRelativePath);
-
-  let activeBranch = branchName;
-  try {
-    await params.vaultClient.createBranch({ branchName: activeBranch });
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 422) {
-      activeBranch = `${branchName}-${formatBranchSuffix(nowDate)}`;
-      await params.vaultClient.createBranch({ branchName: activeBranch });
-    } else {
-      throw err;
-    }
-  }
 
   const reportMarkdown = renderResearchReportMarkdown({
     topicTitle: params.topicTitle,
     topicSlug,
+    reportSlug,
+    categoryTag,
     updatedAtIso,
     extraTags: params.extraTags,
     generated,
     sourcePath: params.sourcePath,
-    targetWikiPath: params.targetWikiPath,
-    branchName: activeBranch,
+    targetWikiPath: normalizedTarget,
+    branchName: "main",
   });
+
+  const indexRepoPath = joinRepoPath(params.vaultPrefix, "wiki/index.md");
+  const logRepoPath = joinRepoPath(params.vaultPrefix, "wiki/log.md");
+  const canUpdateParent = Boolean(
+    normalizedTarget &&
+      normalizedTarget.startsWith("wiki/") &&
+      !isProtectedVaultPath(normalizedTarget) &&
+      normalizedTarget.toLowerCase() !== reportRelativePath.toLowerCase(),
+  );
+  const parentRepoPath = canUpdateParent && normalizedTarget
+    ? joinRepoPath(params.vaultPrefix, normalizedTarget)
+    : null;
+
+  const [indexMd, logMd, parentMd] = await Promise.all([
+    params.vaultClient.fetchFile(indexRepoPath),
+    params.vaultClient.fetchFile(logRepoPath),
+    parentRepoPath ? params.vaultClient.fetchFile(parentRepoPath) : Promise.resolve(null),
+  ]);
+
+  const changes: AtomicFileChange[] = [
+    { path: reportRepoPath, content: reportMarkdown },
+  ];
+
+  const { markdown: nextIndexMd, changed: indexChanged } = updateWikiIndexMarkdown({
+    existingIndexMarkdown: indexMd,
+    slug: reportSlug,
+    title: `Research: ${params.topicTitle}`,
+    description: generated.summary,
+    section: indexSection,
+    updatedAtIso,
+  });
+  if (indexChanged) {
+    changes.push({ path: indexRepoPath, content: nextIndexMd });
+  }
+
+  const nextLogMd = prependResearchLogMarkdown({
+    existingLogMarkdown: logMd,
+    dateStr: noteDate,
+    updatedAtIso,
+    topicTitle: params.topicTitle,
+    reportSlug,
+  });
+  changes.push({ path: logRepoPath, content: nextLogMd });
+
+  if (parentRepoPath && parentMd !== null) {
+    const nextParentMd = appendResearchLinkToParentPage(
+      parentMd,
+      reportSlug,
+      params.topicTitle,
+      updatedAtIso,
+    );
+    if (nextParentMd !== null) {
+      changes.push({ path: parentRepoPath, content: nextParentMd });
+    }
+  }
 
   const commitRes = await params.vaultClient.commitAtomicChanges({
-    branch: activeBranch,
     commitMessage: `agent(researcher): ${params.topicTitle}`,
-    changes: [{ path: reportRepoPath, content: reportMarkdown }],
-  });
-
-  const prBody = renderPullRequestBody({
-    topicTitle: params.topicTitle,
-    reportRepoPath,
-    sourcePath: params.sourcePath,
-    targetWikiPath: params.targetWikiPath,
-    generated,
-  });
-
-  const pr = await params.vaultClient.createPullRequest({
-    title: `Research: ${params.topicTitle}`,
-    body: prBody,
-    head: activeBranch,
+    changes,
   });
 
   return {
     status: "created",
     topicSlug,
-    branch: activeBranch,
+    branch: "main",
     reportPath: reportRepoPath,
-    prNumber: pr.number,
-    prUrl: pr.url,
     commitSha: commitRes.commitSha,
     sourcesCount: generated.sources.length,
     grounded: generated.grounded,

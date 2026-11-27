@@ -95,14 +95,51 @@ function createResearchMockVaultClient(initialFiles: Record<string, string>): {
   return { client, branches, openPrs, existingBranchNames };
 }
 
-test("buildResearchPaths and renderResearchReportMarkdown format valid Obsidian report", () => {
+test("buildResearchPaths maps PARA categories and renderResearchReportMarkdown formats valid report", () => {
   const paths = buildResearchPaths({
     topicTitle: "Bateria LiPo 3.7V do Waveshare",
     targetWikiPath: "wiki/pomysly/bateria-lipo-waveshare.md",
   });
   assert.equal(paths.topicSlug, "bateria-lipo-waveshare");
   assert.equal(paths.reportRelativePath, "wiki/pomysly/bateria-lipo-waveshare/research.md");
-  assert.equal(paths.branchName, "agent/research-bateria-lipo-waveshare");
+  assert.equal(paths.reportSlug, "pomysly/bateria-lipo-waveshare/research");
+  assert.equal(paths.indexSection, "Pomysły");
+  assert.equal(paths.branchName, "main");
+
+  const obsPaths = buildResearchPaths({
+    topicTitle: "Samopoczucie po biegu",
+    targetWikiPath: "wiki/obszary/zdrowie/samopoczucie.md",
+  });
+  assert.equal(obsPaths.reportRelativePath, "wiki/obszary/zdrowie/samopoczucie/research.md");
+  assert.equal(obsPaths.indexSection, "Obszary");
+  assert.equal(obsPaths.categoryTag, "obszar");
+
+  const projPaths = buildResearchPaths({
+    topicTitle: "Remont łazienki",
+    targetWikiPath: "wiki/projekty/dom/remont.md",
+  });
+  assert.equal(projPaths.reportRelativePath, "wiki/projekty/dom/remont/research.md");
+  assert.equal(projPaths.indexSection, "Projekty");
+
+  const resPaths = buildResearchPaths({
+    topicTitle: "Kawa przelewowa",
+    targetWikiPath: "wiki/zasoby/kawa.md",
+  });
+  assert.equal(resPaths.reportRelativePath, "wiki/zasoby/kawa/research.md");
+  assert.equal(resPaths.indexSection, "Zasoby");
+
+  const noDoubleNest = buildResearchPaths({
+    topicTitle: "Samopoczucie",
+    targetWikiPath: "wiki/obszary/zdrowie/samopoczucie/research.md",
+  });
+  assert.equal(noDoubleNest.reportRelativePath, "wiki/obszary/zdrowie/samopoczucie/research.md");
+
+  const protectedFallback = buildResearchPaths({
+    topicTitle: "Status Foxie",
+    targetWikiPath: "wiki/projekty/foxie-notes/status.md",
+  });
+  assert.equal(protectedFallback.reportRelativePath, "wiki/pomysly/status-foxie/research.md");
+  assert.equal(protectedFallback.indexSection, "Pomysły");
 
   const generated: GeneratedResearchReport = {
     title: "Bateria LiPo 3.7V do Waveshare",
@@ -117,71 +154,99 @@ test("buildResearchPaths and renderResearchReportMarkdown format valid Obsidian 
   const md = renderResearchReportMarkdown({
     topicTitle: "Bateria LiPo 3.7V do Waveshare",
     topicSlug: paths.topicSlug,
+    reportSlug: paths.reportSlug,
+    categoryTag: paths.categoryTag,
     updatedAtIso: "2026-11-26T18:20:00Z",
     extraTags: ["sprzet", "#pomysl"],
     generated,
     sourcePath: "raw/processed/2026-11/2026-11-26-lipo.md",
     targetWikiPath: "wiki/pomysly/bateria-lipo-waveshare.md",
-    branchName: paths.branchName,
+    branchName: "main",
   });
 
   assert.match(md, /^title: "Research: Bateria LiPo 3\.7V do Waveshare"/m);
   assert.match(md, /^slug: pomysly\/bateria-lipo-waveshare\/research/m);
   assert.match(md, /^grounded: true/m);
   assert.match(md, /Powiązane: \[\[pomysly\/bateria-lipo-waveshare\]\]/);
+  assert.match(md, /Publikacja: bezpośrednio w vault \(`main`\)/);
   assert.doesNotMatch(md, /Nadmiarowy H1/);
   assert.match(md, /\[Waveshare Wiki\]\(https:\/\/www\.waveshare\.com\/wiki\/ESP32-S3\)/);
 });
 
-test("runResearchAgent skips duplicate open PR and falls back with timestamp suffix on 422 branch collision", async () => {
-  const { client, openPrs, existingBranchNames } = createResearchMockVaultClient({});
-  existingBranchNames.add("agent/research-czujnik-co2");
-
-  const mockGen = async (): Promise<GeneratedResearchReport> => ({
-    title: "Czujnik CO2",
-    summary: "Sensirion SCD41 zapewnia niskie zużycie prądu.",
-    reportMarkdown: "## Podsumowanie wykonawcze\n\nSensirion SCD41 jest najlepszy do baterii.",
-    sources: [{ title: "Sensirion", uri: "https://sensirion.com" }],
-    searchQueries: ["SCD41 power consumption"],
-    grounded: true,
+test("runResearchAgent publishes directly to main in matching PARA category, updates index + log + parent, and skips duplicates unless forced", async () => {
+  const { client, branches, openPrs } = createResearchMockVaultClient({
+    "wiki/index.md": "---\ntitle: Spis treści\nslug: index\n---\n\n# Spis treści\n\n## Obszary\n- [[obszary/zdrowie/samopoczucie|Zdrowie i samopoczucie]] — Monitorowanie samopoczucia.\n",
+    "wiki/log.md": "---\ntitle: Log zmian\nslug: log\n---\n\n# Log zmian\n",
+    "wiki/obszary/zdrowie/samopoczucie.md": "---\ntitle: Zdrowie i samopoczucie\n---\n\n# Zdrowie i samopoczucie\n\nSpadek energii po biegu 8 km.\n",
   });
 
+  let callCount = 0;
+  const mockGen = async (): Promise<GeneratedResearchReport> => {
+    callCount++;
+    return {
+      title: "Regeneracja po biegu",
+      summary: "Odpoczynek 48h, nawodnienie i sen poprawiają regenerację.",
+      reportMarkdown: "## Podsumowanie wykonawcze\n\nOdpoczynek 48h, nawodnienie i sen.",
+      sources: [{ title: "Sports Med", uri: "https://example.test/recovery" }],
+      searchQueries: ["running fatigue recovery"],
+      grounded: true,
+    };
+  };
+
   const first = await runResearchAgent({
-    topicTitle: "Czujnik CO2",
-    noteMarkdown: "Zbadać czujniki CO2 pod e-ink.",
+    topicTitle: "Regeneracja po biegu",
+    noteMarkdown: "Spadek energii po biegu.",
+    targetWikiPath: "wiki/obszary/zdrowie/samopoczucie.md",
     vaultClient: client,
     generateReport: mockGen,
-    now: () => new Date("2026-11-26T18:25:00Z"),
+    now: () => new Date("2026-11-27T10:30:00Z"),
   });
 
   assert.equal(first.status, "created");
-  assert.equal(first.branch, "agent/research-czujnik-co2-20261126-1825");
-  assert.equal(openPrs.length, 1);
+  assert.equal(first.branch, "main");
+  assert.equal(first.reportPath, "wiki/obszary/zdrowie/samopoczucie/research.md");
+  assert.equal(openPrs.length, 0);
+  assert.equal(callCount, 1);
 
-  // When an open PR exists on the canonical branch, skip without calling generator again
-  openPrs.push({
-    number: 99,
-    url: "https://github.com/example/pull/99",
-    branch: "agent/research-nowy-temat",
-    title: "Existing",
-    body: "",
-  });
-  let called = false;
+  const mainFiles = branches.get("main")!;
+  assert.equal(mainFiles.has("wiki/obszary/zdrowie/samopoczucie/research.md"), true);
+  assert.match(
+    mainFiles.get("wiki/index.md") ?? "",
+    /\[\[obszary\/zdrowie\/samopoczucie\/research\|Research: Regeneracja po biegu\]\]/,
+  );
+  assert.match(
+    mainFiles.get("wiki/log.md") ?? "",
+    /\*\*Agent Researcher \(`research`\):\*\* Opublikowano raport \[\[obszary\/zdrowie\/samopoczucie\/research\|Research: Regeneracja po biegu\]\]/,
+  );
+  assert.match(
+    mainFiles.get("wiki/obszary/zdrowie/samopoczucie.md") ?? "",
+    /## Powiązany research[\s\S]*\[\[obszary\/zdrowie\/samopoczucie\/research\|Research: Regeneracja po biegu\]\]/,
+  );
+
   const skipped = await runResearchAgent({
-    topicTitle: "Nowy temat",
-    noteMarkdown: "Treść",
+    topicTitle: "Regeneracja po biegu",
+    noteMarkdown: "Spadek energii po biegu.",
+    targetWikiPath: "wiki/obszary/zdrowie/samopoczucie.md",
     vaultClient: client,
-    generateReport: async () => {
-      called = true;
-      return mockGen();
-    },
+    generateReport: mockGen,
   });
   assert.equal(skipped.status, "skipped");
-  assert.equal(skipped.prNumber, 99);
-  assert.equal(called, false);
+  assert.equal(skipped.reason, "research_already_exists");
+  assert.equal(callCount, 1);
+
+  const forced = await runResearchAgent({
+    topicTitle: "Regeneracja po biegu",
+    noteMarkdown: "Spadek energii po biegu.",
+    targetWikiPath: "wiki/obszary/zdrowie/samopoczucie.md",
+    vaultClient: client,
+    generateReport: mockGen,
+    force: true,
+  });
+  assert.equal(forced.status, "created");
+  assert.equal(callCount, 2);
 });
 
-test("Webhook research-idea -> Organizer -> Researcher PR & POST /api/agents/research work end-to-end", async () => {
+test("Webhook research-idea -> Organizer -> Researcher publishes directly to main & POST /api/agents/research works end-to-end", async () => {
   process.env.DEVICE_API_KEY = "test-device-key";
   process.env.GITHUB_WEBHOOK_SECRET = "hook-secret";
   process.env.GITHUB_BRANCH = "main";
@@ -281,28 +346,35 @@ test("Webhook research-idea -> Organizer -> Researcher PR & POST /api/agents/res
     assert.equal(hookJson.organized?.[0].status, "processed");
     assert.equal(hookJson.organized?.[0].intent, "research-idea");
     assert.equal(hookJson.organized?.[0].research?.status, "created");
-    assert.equal(hookJson.organized?.[0].research?.branch, "agent/research-dobor-baterii-lipo");
+    assert.equal(hookJson.organized?.[0].research?.branch, "main");
     assert.equal(
       hookJson.organized?.[0].research?.reportPath,
       "wiki/pomysly/dobor-baterii-lipo/research.md",
     );
-    assert.equal(openPrs.length, 1);
+    assert.equal(openPrs.length, 0);
 
-    // Main branch should NOT contain research.md yet (it lives only on the PR branch)
+    // Main branch directly contains both the idea page and research.md + updated index/log
     const mainFiles = branches.get("main")!;
     assert.equal(mainFiles.has("wiki/pomysly/dobor-baterii-lipo.md"), true);
-    assert.equal(mainFiles.has("wiki/pomysly/dobor-baterii-lipo/research.md"), false);
+    assert.equal(mainFiles.has("wiki/pomysly/dobor-baterii-lipo/research.md"), true);
 
-    const prBranchFiles = branches.get("agent/research-dobor-baterii-lipo")!;
-    const reportMd = prBranchFiles.get("wiki/pomysly/dobor-baterii-lipo/research.md") ?? "";
+    const reportMd = mainFiles.get("wiki/pomysly/dobor-baterii-lipo/research.md") ?? "";
     assert.match(reportMd, /Waveshare 1\.54 V2/);
     assert.match(reportMd, /- \[ \] Zmierzyć wnękę w obudowie/);
+    assert.match(
+      mainFiles.get("wiki/index.md") ?? "",
+      /\[\[pomysly\/dobor-baterii-lipo\/research\|Research: Dobór baterii LiPo do Waveshare V2\]\]/,
+    );
+    assert.match(
+      mainFiles.get("wiki/pomysly/dobor-baterii-lipo.md") ?? "",
+      /\[\[pomysly\/dobor-baterii-lipo\/research\|/,
+    );
 
     const jobs = store.getAllInboxJobs();
-    assert.equal(jobs[0].researchPrNumber, 1);
-    assert.match(jobs[0].researchPrUrl ?? "", /pull\/1$/);
+    assert.equal(jobs[0].researchPrNumber, undefined);
+    assert.equal(jobs[0].researchReportPath, "wiki/pomysly/dobor-baterii-lipo/research.md");
 
-    // 2. POST /api/agents/research endpoint auth + validation + execution
+    // 2. POST /api/agents/research endpoint auth + validation + direct execution
     const unauth = await fetch(`${baseUrl}/api/agents/research`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -330,13 +402,16 @@ test("Webhook research-idea -> Organizer -> Researcher PR & POST /api/agents/res
     const manualJson = (await manualRes.json()) as {
       ok: boolean;
       status: string;
-      prNumber: number;
+      reportPath: string;
       branch: string;
     };
     assert.equal(manualJson.ok, true);
     assert.equal(manualJson.status, "created");
-    assert.equal(manualJson.prNumber, 2);
-    assert.equal(manualJson.branch, "agent/research-alternatywne-zasilanie-solarne");
+    assert.equal(manualJson.branch, "main");
+    assert.equal(
+      manualJson.reportPath,
+      "wiki/pomysly/alternatywne-zasilanie-solarne/research.md",
+    );
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),

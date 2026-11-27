@@ -1,7 +1,7 @@
 ---
 title: Status projektu i handoff (Foxie Notes)
 slug: projekty/foxie-notes/status
-updated_at: 2026-11-27T07:42:00Z
+updated_at: 2026-11-27T09:40:00Z
 tags: [status, handoff, foxie-notes, workflow]
 ---
 
@@ -35,7 +35,7 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
    - Lokalny serwer LAN do testów E2E z urządzenia: `npm --prefix functions run dev` (`devServer.ts` ładujący `.env` + `.secret.local`, nasłuch na `0.0.0.0:8787`).
    - **Etap 2A + Webhook GitHub (`obsydianandwiki`, hook `717206121`):** `POST /api/webhook/github` z weryfikacją `X-Hub-Signature-256` (`rawBody`), konwerterem `markdownToPlainText`, parserem zadań (`- [ ]` / `- [x]`, `@due(...)`, `#tag`, priorytet) i synchronizacją `wiki_pages` (ID `slug.replace(/\//g, "__")`), `wiki_meta/index` oraz `tasks` (`firestoreStore.ts` + `wikiSync.ts`). Endpointy `GET /api/wiki/index` (`?q=`) oraz `GET /api/wiki/page/*` (`?format=plain` dla e-ink) chronione przez `requireAuth`.
    - **Faza 1 — Agent Organizator (`inboxOrganizer.ts` + `github.ts` + `POST /api/agents/organize-inbox`):** Webhook `push` automatycznie wykrywa nowe pliki `raw/inbox/*.md` (z ochroną anti-loop ignorującą commity `agent(` oraz `docs(vault):`), klasyfikuje notatki przez `gemini-3.8-flash` według taksonomii **PARA + Dziennik**, aktualizuje `wiki/`, `wiki/index.md` i `wiki/log.md` oraz przenosi oryginał w tym samym atomowym commicie do `raw/processed/YYYY-MM/`. Idempotencja śledzona transakcyjnie w Firestore (`inbox_jobs`).
-   - **Faza 2 — Agent Researcher PR (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` Organizator automatycznie uruchamia Researchera, który wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`, bez `responseMimeType: "application/json"`), zapisuje bezkonfliktowy raport `wiki/pomysly/<slug>/research.md` (z zadaniami `- [ ]` i źródłami z `groundingMetadata`) na osobnej gałęzi `agent/research-<slug>` i otwiera **Pull Request** do akceptacji użytkownika w `obsydianandwiki` (z deduplikacją otwartych PR i obsługą kolizji gałęzi `422`). **PR #1 został scalony** (`obsydianandwiki/pull/1`, `db6393d`), a `pomysly/bateria-lipo-obudowa-waveshare/research` zsynchronizował się automatycznie do Firestore.
+   - **Faza 2 — Agent Researcher (`researchAgent.ts` + `POST /api/agents/research`):** Po zaklasyfikowaniu notatki jako `research-idea` (lub na żądanie z przycisku **Zrób Research** w `web/`) wykonuje analizę przez `gemini-3.8-flash` z **Google Search grounding** (`tools: [{ googleSearch: {} }]`) i zapisuje raport **bezpośrednio do `main`** w dopasowanym folderze/kategorii PARA (np. `wiki/pomysly/<slug>/research.md`, `wiki/obszary/.../<temat>/research.md`, `wiki/projekty/.../<temat>/research.md`, `wiki/zasoby/<temat>/research.md` — z ochroną chronionego `foxie-notes`), automatycznie dopisuje wpis do `wiki/index.md`, `wiki/log.md` oraz link w notatce źródłowej (`## Powiązany research`) bez czekania na ręczny merge PR. Zaległe PR **#2** (`596f0ba`) i **#3** (`736cbfe`) w `obsydianandwiki` zostały scalone do `main`.
    - **Faza 3 — Agent Planowania (`googleWorkspace.ts` + `planningAgent.ts` + `POST /api/agents/plan`):** W pełni skonfigurowany i zweryfikowany na żywo w chmurze. Po klasyfikacji `plan-calendar` lub `todo` najpierw automatycznie wyszukuje brakujące dane wykonawcze (numer telefonu, adres, godziny, link do walidacji) przez Google Search grounding (`enrichActionableContextWithGemini`), a następnie konsoliduje sprawę w **jedno gotowe do wykonania zadanie** (zero rozbitych meta-zadań typu „znajdź numer”) i ewentualnie jedno wydarzenie w **Google Calendar** (próg pewności `>= 0.75`, z adresem w `location` i zebranymi danymi w opisie), obsługuje **Google Tasks** (`@default`) oraz tematyczne **Google Listy**, bez duplikowania sekcji `## Synchronizacja Google` w `wiki/`.
    - **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + intencja `vault-command`):** Wykonuje polecenia reorganizacji repozytorium Obsidian (np. tworzenie podfolderów tematycznych i wydzielanie stron `wiki/`, scalanie powiązanych notatek z `wiki/` i `raw/processed/`). Posiada twarde guardraile blokujące modyfikację/usunięcie plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), deterministycznie aktualizuje `wiki/index.md` i `wiki/log.md` oraz commituje atomowo z prefiksem `agent(curator):`. Zweryfikowano na żywo utworzeniem `wiki/obszary/zdrowie/samopoczucie.md` (commit `6a6300b`, zsynchronizowane do `GET /api/api/wiki/index`).
    - Testy jednostkowe i integracyjne (`npm --prefix functions test`) przechodzą w `23/23` przypadkach (`tsc` + `node --test`).
@@ -59,9 +59,9 @@ Ten dokument jest głównym punktem wejścia po otwarciu nowego okna kontekstowe
 
 ## Następny krok (Next Action)
 
-1. **Priorytet 1 — Opcja B: Cykliczni agenci Kurator Wiki PR + Przegląd Tygodniowy (`functions/`, `onSchedule`):**
-   - Etap 2B (`web/`) jest gotowy do wdrożenia na **Vercel** (po dodaniu domeny `*.vercel.app` w Firebase Auth -> Authorized domains oraz wpisaniu zmiennych `VITE_*` z `web/.env.example`).
-   - Kolejny krok rozwojowy w backendzie to okresowy **Agent Kurator Wiki („Ogrodnik”)** (raz w tygodniu -> Pull Request proponujący nowe podstrony w `obsydianandwiki` i porządki w `wiki/index.md`) oraz **Agent Przegląd Tygodniowy** (`wiki/dziennik/tydzien-YYYY-Www.md`).
+1. **Priorytet 1 — Opcja B: Cykliczni agenci Kurator „Ogrodnik” + Przegląd Tygodniowy (`functions/`, `onSchedule`):**
+   - Etap 2B (`web/`) jest wdrożony pod `https://foxienews.vercel.app/` (po zapisaniu `VITE_FIREBASE_APP_ID` i dodaniu domeny w Firebase Authorized domains).
+   - Kolejny krok rozwojowy w backendzie to okresowy **Agent Kurator Wiki („Ogrodnik”)** (raz w tygodniu -> zapisuje porządki bezpośrednio na `main` w `obsydianandwiki` bez czekania na PR) oraz **Agent Przegląd Tygodniowy** (`wiki/dziennik/tydzien-YYYY-Www.md`).
 
 ## Pliki startowe do wczytania w nowym oknie
 

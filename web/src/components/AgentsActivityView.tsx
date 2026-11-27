@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  FlaskConical,
   FolderTree,
   GitPullRequest,
   Loader2,
@@ -91,7 +92,7 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
       <div className="flex flex-col justify-between gap-3 rounded-2xl border border-[#E4DFD4] bg-[#FCFBF8] p-5 sm:flex-row sm:items-center">
         <div>
           <p className="font-mono-meta text-[11px] uppercase tracking-[0.16em] text-[#7A756D]">
-            Chmurowi agenci · Organizator · Researcher PR · Planowanie
+            Chmurowi agenci · Organizator · Researcher · Kurator · Planowanie
           </p>
           <h2 className="mt-1 text-lg font-medium text-[#1C1A18]">
             Dziennik przetwarzania `raw/inbox/`
@@ -276,7 +277,23 @@ export const AgentsActivityView: React.FC<AgentsActivityViewProps> = ({
                       </button>
                     ))}
 
-                  {job.researchPrUrl && (
+                  {job.researchReportPath && (() => {
+                    const researchSlug = normalizeSlug(
+                      job.researchReportPath.replace(/^wiki\//i, ""),
+                    );
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWikiSlug(researchSlug)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#C6D8CC] bg-[#F1F7F3] px-2.5 py-1 font-medium text-[#244B3C] hover:bg-[#E4EFE7]"
+                      >
+                        <FlaskConical className="h-3.5 w-3.5" />
+                        Research: [[{researchSlug}]]
+                      </button>
+                    );
+                  })()}
+
+                  {job.researchPrUrl && !job.researchReportPath && (
                     <a
                       href={job.researchPrUrl}
                       target="_blank"

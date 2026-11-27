@@ -1,13 +1,17 @@
 ---
 title: Dziennik zmian
 slug: log
-updated_at: 2026-11-27T07:42:00Z
+updated_at: 2026-11-27T09:40:00Z
 tags: [log]
 ---
 
 # Dziennik zmian (LLM Wiki & Rozwój Projektu)
 
 ## 2026-11-27
+- **Bezpośrednia publikacja raportów Research na `main` (bez ręcznych PR) + automatyczne przypisanie do kategorii PARA:**
+  - Przebudowano [`researchAgent.ts`](../../../functions/src/services/researchAgent.ts), aby publikował raporty `research.md` bezpośrednio na `main` w docelowym folderze kategorii PARA (`wiki/obszary/...`, `wiki/projekty/...`, `wiki/pomysly/...`, `wiki/zasoby/...`, z ochroną chronionych plików `foxie-notes`), automatycznie aktualizował `wiki/index.md`, `wiki/log.md` oraz dopisywał sekcję `## Powiązany research` w notatce nadrzędnej.
+  - Zaktualizowano UI w [`WikiView.tsx`](../../../web/src/components/WikiView.tsx) (`Zrób Research` + bezpośredni przycisk `Otwórz [[slug]]`), [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx) (`Research: [[slug]]`) oraz [`api.ts`](../../../web/src/lib/api.ts), a testy w [`researchAgent.test.ts`](../../../functions/src/__tests__/researchAgent.test.ts) przeszły w `23/23` przypadkach.
+  - Scalono otwarte dotąd PR **#2** (`596f0ba`) i **#3** (`736cbfe`) w `obsydianandwiki` do `main` i usunięto gałęzie `agent/research-*`.
 - **Agent Kurator Wiki (`vaultCommandAgent.ts` + `POST /api/agents/vault-command` + zakładka `Agenci` w `web/`):**
   - Dodano obsługę poleceń reorganizacji repozytorium Obsidian (zarówno przez intencję `vault-command` w [`inboxOrganizer.ts`](../../../functions/src/services/inboxOrganizer.ts) dla notatek głosowych/webowych, jak i bezpośrednio przez `POST /api/agents/vault-command` w [`app.ts`](../../../functions/src/app.ts) oraz formularz „Polecenie dla Kuratora Wiki” w [`AgentsActivityView.tsx`](../../../web/src/components/AgentsActivityView.tsx)).
   - Dodano guardraile blokujące modyfikacje plików chronionych (`wiki/index.md`, `wiki/log.md`, `SCHEMA.md`, `raw/**`, `wiki/projekty/foxie-notes/**`), atomowe commity `agent(curator):` z automatyczną aktualizacją `wiki/index.md` i `wiki/log.md` oraz testy jednostkowe w [`vaultCommandAgent.test.ts`](../../../functions/src/__tests__/vaultCommandAgent.test.ts) (`23/23` pass, `web` build OK).

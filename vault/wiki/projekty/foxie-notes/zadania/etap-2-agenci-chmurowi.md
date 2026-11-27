@@ -1,7 +1,7 @@
 ---
 title: Zadania — Chmurowi Agenci (Organizator, Researcher PR, Kalendarz/Tasks)
 slug: projekty/foxie-notes/zadania/etap-2-agenci-chmurowi
-updated_at: 2026-11-27T06:40:00Z
+updated_at: 2026-11-27T09:40:00Z
 tags: [zadania, agenci, chmura, obsidian, foxie-notes]
 ---
 
@@ -27,10 +27,10 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
    - Klasyfikuje intencję notatki: `knowledge | project | plan-calendar | todo | research-idea`.
    - Umieszcza / dopisuje zsyntetyzowaną treść w spójnym podkatalogu (np. `wiki/projekty/<projekt>/`, `wiki/obszary/<obszar>/`, `wiki/pomysly/`, `wiki/zasoby/`, `wiki/dziennik/`), dodaje `[[wikilinks]]`, aktualizuje `wiki/index.md` i `wiki/log.md` jednym atomowym commitem przez GitHub Git Data API.
 
-3. **Faza 2 — Agent Researcher (Pomysły -> Pull Request w Git do akceptacji):**
-   - Wyzwalany dla notatek zaklasyfikowanych jako `research-idea`.
+3. **Faza 2 — Agent Researcher (Pomysły i analiza -> bezpośrednio do `main` w kategorii PARA):**
+   - Wyzwalany dla notatek zaklasyfikowanych jako `research-idea` lub na żądanie z aplikacji webowej (`Zrób Research`).
    - Uruchamia `gemini-3.8-flash` z Google Search grounding / głębszą analizą (problem, warianty rozwiązania, ryzyka, źródła, następne kroki).
-   - Tworzy osobną gałąź `agent/research-<slug>` w `obsydianandwiki`, zapisuje raport Markdown (np. `wiki/pomysly/<slug>/research.md`) i otwiera **Pull Request** do przeglądu i scalenia (`Merge PR`) przez użytkownika w GitHubie.
+   - Zapisuje raport Markdown bezpośrednio w dopasowanym katalogu PARA (np. `wiki/pomysly/<slug>/research.md`, `wiki/obszary/.../research.md`, `wiki/projekty/.../research.md`, `wiki/zasoby/<slug>/research.md`), aktualizuje `wiki/index.md`, `wiki/log.md` oraz linkuje raport w notatce nadrzędnej jednym atomowym commitem na `main` (bez ręcznego zatwierdzania PR).
 
 4. **Faza 3 — Agent Planowania (Google Calendar + Google Tasks):**
    - Wyzwalany dla notatek zaklasyfikowanych jako `plan-calendar` lub `todo` (z obsługą `@due(YYYY-MM-DD)`).
@@ -52,10 +52,10 @@ Powiązane: [[projekty/foxie-notes/index|Foxie Notes]] · [[projekty/foxie-notes
 - [x] Zaimplementować `inboxOrganizer.ts` (`gemini-3.8-flash` + deterministyczne składanie/scalanie Markdown, `wiki/index.md`, `wiki/log.md`, przenoszenie do `raw/processed/YYYY-MM/` oraz kolejka idempotencji `inbox_jobs` w Firestore) i endpoint `POST /api/agents/organize-inbox` #agenci #ai
 - [x] Dodać testy jednostkowe / integracyjne (`npm --prefix functions test` -> `13/13`), wdrożyć funkcję `api` + `firestore:rules` i przeprocesować 8 istniejących notatek w `obsydianandwiki/raw/inbox/` (`8/8 processed`, zero błędów) #agenci #testy
 
-### Faza 2 — Agent Researcher (Analiza -> Git Pull Request)
+### Faza 2 — Agent Researcher (Analiza bezpośrednio na `main` w kategorii PARA)
 - [x] Zaimplementować `researchAgent` (Gemini `gemini-3.8-flash` z Google Search grounding `tools: [{ googleSearch: {} }]` generujący ustrukturyzowany raport + zweryfikowane źródła z `groundingMetadata` + checkboxy `- [ ]` + fallback bez narzędzia) i endpoint `POST /api/agents/research` #agenci #ai
-- [x] Dodać automatyczne tworzenie gałęzi `agent/research-<slug>` (z obsługą kolizji `422` i deduplikacją otwartych PR przez `findOpenPullRequest`) i otwieranie Pull Requesta w `mazurekbartosz1-lgtm/obsydianandwiki` po klasyfikacji `research-idea` #agenci #github
-- [x] Dodać testy scenariusza `research-idea -> PR` (`16/16` w `npm --prefix functions test`) i zweryfikować na żywo (`POST /api/api/capture` -> webhook -> Organizator -> `obsydianandwiki/pull/1`) #agenci #testy
+- [x] Zaktualizować `researchAgent.ts` na bezpośrednią publikację do `main` w docelowej kategorii PARA (`Obszary` / `Projekty` / `Pomysły` / `Zasoby`) wraz z aktualizacją `wiki/index.md`, `wiki/log.md` i linkiem w notatce nadrzędnej (zamiast czekania na ręczny merge PR; zaległe PR #1–#3 scalone do `main`) #agenci #github
+- [x] Zaktualizować testy scenariusza `research-idea -> main` (`23/23` w `npm --prefix functions test`) i przycisk `Zrób Research` / odnośniki `Research: [[slug]]` w `web/` #agenci #testy
 
 ### Faza 3 — Agent Planowania (Google Calendar + Google Tasks + Google Listy)
 - [x] Przygotować klienta REST Google Workspace (`googleWorkspace.ts`), skrypt autoryzacji OAuth2 (`scripts/google-oauth-setup.mjs`) dla scope'ów Calendar + Tasks oraz obsługę `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` #agenci #sekrety

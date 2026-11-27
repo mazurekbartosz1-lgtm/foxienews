@@ -78,10 +78,11 @@ export async function triggerOrganizeInbox(limit = 10): Promise<{
 
 export async function triggerResearchForPage(
   wikiPath: string,
+  force = true,
 ): Promise<ResearchRunResponse> {
   return apiFetch<ResearchRunResponse>("/api/agents/research", {
     method: "POST",
-    body: JSON.stringify({ wikiPath }),
+    body: JSON.stringify({ wikiPath, force }),
   });
 }
 
